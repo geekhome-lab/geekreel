@@ -29,10 +29,19 @@ interface ReportRow {
   reportJson: string;
   framesJson: string;
   transcript: string | null;
+  wordsJson?: string | null;
+  usedVision?: number;
   createdAt: number;
 }
 
 function rowToReport(row: ReportRow): AnalysisReport {
+  let words: AnalysisReport["words"] = [];
+  try {
+    words = JSON.parse(row.wordsJson || "[]") as AnalysisReport["words"];
+    if (!Array.isArray(words)) words = [];
+  } catch {
+    words = [];
+  }
   return {
     id: row.id,
     sourceUrl: row.sourceUrl,
@@ -41,6 +50,8 @@ function rowToReport(row: ReportRow): AnalysisReport {
     report: JSON.parse(row.reportJson) as AnalysisReportDoc,
     frames: JSON.parse(row.framesJson || "[]") as AnalysisFrame[],
     transcript: row.transcript,
+    words,
+    usedVision: Number(row.usedVision) === 1,
     createdAt: row.createdAt,
   };
 }
@@ -61,9 +72,11 @@ export function frameAbs(reportId: string, file: string): string {
 
 export function analyzeStatus() {
   const ytdlp = detectYtdlp();
+  const llms = listEndpoints("llm").filter((e) => e.enabled);
   return {
     ytdlp: !!ytdlp.bin,
-    hasLlm: listEndpoints("llm").some((e) => e.enabled),
+    hasLlm: llms.length > 0,
+    hasVision: llms.some((e) => e.vision),
   };
 }
 
@@ -132,6 +145,7 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
 
   ctx.progress(0.55, "试着转写旁白");
   let transcript: string | null = null;
+  let words: AnalysisReport["words"] = [];
   try {
     const audioPath = join(workDir, "audio.wav");
     await extractAudio(bins.ffmpeg, videoAbs, audioPath, { maxSec: 180, signal: ctx.signal });
@@ -143,7 +157,9 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
       const tr = speechEp ? getAdapter(speechEp.adapterType)?.transcribe : null;
       if (speechEp && tr) {
         const wav = new Uint8Array(readFileSync(audioPath));
-        transcript = (await tr(speechEp.config, { data: wav, filename: "audio.wav", mime: "audio/wav", signal: ctx.signal })) || null;
+        const result = await tr(speechEp.config, { data: wav, filename: "audio.wav", mime: "audio/wav", signal: ctx.signal });
+        transcript = result.text || null;
+        words = result.words ?? [];
         if (transcript) {
           recordUsage({ endpoint: speechEp, jobType: "analyze.transcribe", audioChars: transcript.length });
         }
@@ -151,6 +167,7 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
     }
   } catch {
     transcript = null;
+    words = [];
   }
 
   ctx.progress(0.7, "请文本模型拆解");
@@ -159,6 +176,15 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
+  const usedVision = !!endpoint.vision && frames.length > 0;
+  const images = usedVision
+    ? frames.slice(0, 6).flatMap((f) => {
+        const abs = join(workDir, f.file);
+        if (!existsSync(abs)) return [];
+        return [{ mime: "image/jpeg", data: new Uint8Array(readFileSync(abs)) }];
+      })
+    : undefined;
+
   let doc: AnalysisReportDoc;
   try {
     const text = await chatMetered(
@@ -166,7 +192,8 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
       endpoint,
       {
         system: ANALYZE_SYSTEM,
-        prompt: analysisPrompt({ title, durationMs, frames, transcript, sourceUrl }),
+        prompt: analysisPrompt({ title, durationMs, frames, transcript, sourceUrl, withImages: usedVision }),
+        images,
       },
       { jobType: "analyze.run" },
     );
@@ -205,12 +232,25 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
     report: doc,
     frames,
     transcript,
+    words,
+    usedVision,
     createdAt: now(),
   };
   db.run(
-    `INSERT INTO analysis_reports (id, sourceUrl, videoAssetId, title, reportJson, framesJson, transcript, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [report.id, report.sourceUrl, report.videoAssetId, report.title, JSON.stringify(report.report), JSON.stringify(frames), transcript, report.createdAt],
+    `INSERT INTO analysis_reports (id, sourceUrl, videoAssetId, title, reportJson, framesJson, transcript, wordsJson, usedVision, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      report.id,
+      report.sourceUrl,
+      report.videoAssetId,
+      report.title,
+      JSON.stringify(report.report),
+      JSON.stringify(frames),
+      transcript,
+      JSON.stringify(words),
+      usedVision ? 1 : 0,
+      report.createdAt,
+    ],
   );
   ctx.progress(1, "报告已出");
   return { reportId: id, title: report.title };

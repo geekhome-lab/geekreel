@@ -27,9 +27,32 @@ test("台词越长时长越长，不超过槽位上限", () => {
 
 test("字幕按词级时长串起来", () => {
   const clips = assembleSubtitleClips([
-    { slotId: "a", line: "你好", imagePrompt: "近景", maxSec: 3 },
-    { slotId: "b", line: "下一句更长一些的台词", imagePrompt: "远景", maxSec: 5 },
+    { line: "你好", imagePrompt: "近景", maxSec: 3 },
+    { line: "下一句更长一些的台词", imagePrompt: "远景", maxSec: 5 },
   ]);
   expect(clips).toHaveLength(2);
   expect(clips[1]!.startMs).toBe(clips[0]!.durationMs);
+});
+
+test("有原镜时按原片时长对齐", () => {
+  const clips = assembleSubtitleClips(
+    [{ line: "新台词更长一些", imagePrompt: "近景", maxSec: 8 }],
+    { originalShots: [{ startMs: 0, endMs: 2000, line: "旧" }] },
+  );
+  expect(clips[0]!.durationMs).toBeGreaterThan(2000);
+  expect(clips[0]!.durationMs).toBeLessThanOrEqual(3600);
+});
+
+test("有词级时间戳时用词跨度", () => {
+  const clips = assembleSubtitleClips(
+    [{ line: "新", imagePrompt: "近景", maxSec: 8 }],
+    {
+      originalShots: [{ startMs: 1000, endMs: 4000, line: "旧台词" }],
+      words: [
+        { word: "旧", startMs: 1200, endMs: 1600 },
+        { word: "台词", startMs: 1600, endMs: 2100 },
+      ],
+    },
+  );
+  expect(clips[0]!.durationMs).toBe(900);
 });

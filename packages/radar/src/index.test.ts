@@ -5,7 +5,9 @@ import {
   isDue,
   itemHash,
   matchSubscription,
+  parseHttpItems,
   parseRadarResponse,
+  parseRss,
 } from "./index";
 
 test("parseRadarResponse 能抠 markdown 围栏", () => {
@@ -52,4 +54,27 @@ test("matchSubscription 关键词 + 热度 + 平台", () => {
 
 test("buildFocusTemplate 注入领域", () => {
   expect(buildFocusTemplate("电商")).toContain("电商");
+});
+
+test("parseRss 抽 item 标题和链接", () => {
+  const items = parseRss(
+    `<?xml version="1.0"?><rss><channel>
+      <item><title>热搜A</title><link>https://weibo.com/a</link><description>摘要A</description></item>
+      <item><title>热搜B</title><link>https://weibo.com/b</link></item>
+    </channel></rss>`,
+    "微博",
+  );
+  expect(items).toHaveLength(2);
+  expect(items[0]!.title).toBe("热搜A");
+  expect(items[0]!.url).toBe("https://weibo.com/a");
+  expect(items[0]!.heat).toBeGreaterThan(items[1]!.heat);
+});
+
+test("parseHttpItems 认 items 数组", () => {
+  const items = parseHttpItems(
+    { items: [{ title: "接口热", url: "https://x.com/1", heat: 77, summary: "一句话" }] },
+    "自定义",
+  );
+  expect(items[0]!.title).toBe("接口热");
+  expect(items[0]!.heat).toBe(77);
 });

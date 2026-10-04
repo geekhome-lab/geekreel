@@ -157,6 +157,9 @@ export function ModelsPage() {
                           {ep.webSearch && (
                             <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-[10px] text-sky-400">联网</span>
                           )}
+                          {ep.vision && (
+                            <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-400">看图</span>
+                          )}
                           <span className="text-[11px] text-fg-faint">{ep.config.model}</span>
                           <div className="ml-auto flex items-center gap-1">
                             <button
@@ -258,6 +261,7 @@ function EndpointModal(props: {
     return init;
   });
   const [webSearch, setWebSearch] = useState(ep?.webSearch ?? false);
+  const [vision, setVision] = useState(ep?.vision ?? false);
   const [error, setError] = useState("");
 
   const adapter = props.adapters.find((a) => a.type === adapterType);
@@ -266,7 +270,7 @@ function EndpointModal(props: {
   const saveMutation = useMutation({
     mutationFn: async () => {
       // 编辑时 apiKey 留空 = 不修改
-      const payload: Record<string, unknown> = { name: name.trim(), config, webSearch };
+      const payload: Record<string, unknown> = { name: name.trim(), config, webSearch, vision };
       if (ep) {
         return apiJson<ModelEndpoint>(`/api/models/endpoints/${ep.id}`, "patch", payload);
       }
@@ -345,15 +349,26 @@ function EndpointModal(props: {
         ))}
 
         {capability === "llm" && (
-          <label className="flex items-center gap-2 text-xs text-fg-dim">
-            <input
-              type="checkbox"
-              checked={webSearch}
-              onChange={(e) => setWebSearch(e.target.checked)}
-              className="accent-amber-400"
-            />
-            支持联网搜索（热点雷达依赖此能力）
-          </label>
+          <div className="space-y-2">
+            <label className="flex items-center gap-2 text-xs text-fg-dim">
+              <input
+                type="checkbox"
+                checked={webSearch}
+                onChange={(e) => setWebSearch(e.target.checked)}
+                className="accent-amber-400"
+              />
+              支持联网搜索（热点雷达依赖此能力）
+            </label>
+            <label className="flex items-center gap-2 text-xs text-fg-dim">
+              <input
+                type="checkbox"
+                checked={vision}
+                onChange={(e) => setVision(e.target.checked)}
+                className="accent-amber-400"
+              />
+              能看图（竞品分析会把抽帧画面发给它）
+            </label>
+          </div>
         )}
 
         <div className="grid grid-cols-2 gap-3">

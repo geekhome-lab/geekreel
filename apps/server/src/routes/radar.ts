@@ -12,6 +12,7 @@ import {
   getItem,
   getRadarSettings,
   getSource,
+  hasFeedSources,
   hasWebSearchLlm,
   listItems,
   listSources,
@@ -28,6 +29,7 @@ radarRoutes.get("/status", (c) => {
   const sources = listSources();
   return ok(c, {
     hasWebSearchLlm: hasWebSearchLlm(),
+    hasFeedSources: hasFeedSources(),
     sourceCount: sources.length,
     enabledCount: sources.filter((s) => s.enabled).length,
     lastRunAt: sources.reduce<number | null>((m, s) => (s.lastRunAt && (!m || s.lastRunAt > m) ? s.lastRunAt : m), null),
@@ -54,13 +56,19 @@ radarRoutes.get("/sources", (c) => ok(c, listSources()));
 radarRoutes.post("/sources", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     name?: string;
+    kind?: "ai-query" | "rss" | "http-api";
     platform?: string;
     focus?: string;
+    queryTemplate?: string;
     intervalMinutes?: number;
     endpointId?: string | null;
   };
   if (!body.name?.trim()) return err(c, "请给这个观察起个名字，比如「电商」");
-  return ok(c, createSource({ ...body, name: body.name.trim() }));
+  try {
+    return ok(c, createSource({ ...body, name: body.name.trim() }));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e));
+  }
 });
 
 radarRoutes.patch("/sources/:id", async (c) => {
@@ -84,7 +92,7 @@ radarRoutes.delete("/sources/:id", (c) => {
 radarRoutes.post("/sources/:id/run", (c) => {
   const src = getSource(c.req.param("id"));
   if (!src) return err(c, "观察源不存在", 404);
-  if (!hasWebSearchLlm() && !src.endpointId) {
+  if (src.kind === "ai-query" && !hasWebSearchLlm() && !src.endpointId) {
     return err(c, "还没有会联网的文本模型。到「模型」页添加一个，并勾选「支持联网搜索」。", 422);
   }
   const job = jobQueue.submit("radar.fetch", { sourceId: src.id });
@@ -92,13 +100,13 @@ radarRoutes.post("/sources/:id/run", (c) => {
 });
 
 radarRoutes.post("/run-all", (c) => {
-  if (!hasWebSearchLlm()) {
-    return err(c, "还没有会联网的文本模型。到「模型」页添加一个，并勾选「支持联网搜索」。", 422);
+  const sources = listSources().filter((s) => s.enabled);
+  if (sources.length === 0) return err(c, "没有开启的观察源，先打开至少一个平台");
+  const needsLlm = sources.some((s) => s.kind === "ai-query");
+  if (needsLlm && !hasWebSearchLlm()) {
+    return err(c, "还没有会联网的文本模型。到「模型」页添加一个，并勾选「支持联网搜索」。也可以先加 RSS / 接口源再刷新。", 422);
   }
-  const jobs = listSources()
-    .filter((s) => s.enabled)
-    .map((s) => jobQueue.submit("radar.fetch", { sourceId: s.id }));
-  if (jobs.length === 0) return err(c, "没有开启的观察源，先打开至少一个平台");
+  const jobs = sources.map((s) => jobQueue.submit("radar.fetch", { sourceId: s.id }));
   return ok(c, { jobs, count: jobs.length });
 });
 

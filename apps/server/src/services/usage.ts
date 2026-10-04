@@ -20,7 +20,12 @@ export interface UsageInput {
 export async function chatMetered(
   adapter: Pick<ModelAdapter, "chat">,
   endpoint: ModelEndpoint,
-  req: { prompt: string; system?: string; webSearch?: boolean },
+  req: {
+    prompt: string;
+    system?: string;
+    webSearch?: boolean;
+    images?: Array<{ mime: string; data: Uint8Array }>;
+  },
   meta: { projectId?: string | null; jobType: string },
 ): Promise<string> {
   if (!adapter.chat) throw new Error("这个模型不会聊天，换一个文本模型");

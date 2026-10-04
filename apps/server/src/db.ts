@@ -222,6 +222,9 @@ ensureColumn("projects", "stylePackId", "stylePackId TEXT");
 ensureColumn("projects", "paletteJson", "paletteJson TEXT");
 ensureColumn("projects", "seriesId", "seriesId TEXT");
 ensureColumn("projects", "episodeIndex", "episodeIndex INTEGER");
+ensureColumn("model_endpoints", "vision", "vision INTEGER NOT NULL DEFAULT 0");
+ensureColumn("analysis_reports", "wordsJson", "wordsJson TEXT");
+ensureColumn("analysis_reports", "usedVision", "usedVision INTEGER NOT NULL DEFAULT 0");
 ensureColumn("assets", "favorite", "favorite INTEGER NOT NULL DEFAULT 0");
 ensureColumn("assets", "kind", "kind TEXT NOT NULL DEFAULT 'generic'");
 

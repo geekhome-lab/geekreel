@@ -2,11 +2,28 @@ import { Hono } from "hono";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
 import { getReport } from "../services/analyze";
-import { getTemplate, listTemplates, templateFromReport } from "../services/remake";
+import { exportTemplateJson, getTemplate, importTemplateJson, listTemplates, templateFromReport } from "../services/remake";
 
 export const remakeRoutes = new Hono();
 
 remakeRoutes.get("/templates", (c) => ok(c, listTemplates()));
+
+remakeRoutes.post("/templates/import", async (c) => {
+  const body = await c.req.json().catch(() => null);
+  try {
+    return ok(c, importTemplateJson(body));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e));
+  }
+});
+
+remakeRoutes.get("/templates/:id/export", (c) => {
+  try {
+    return ok(c, exportTemplateJson(c.req.param("id")));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 404);
+  }
+});
 
 remakeRoutes.get("/templates/:id", (c) => {
   const tpl = getTemplate(c.req.param("id"));

@@ -23,7 +23,7 @@ export function AnalyzePage() {
 
   const { data: status } = useQuery({
     queryKey: ["analyze-status"],
-    queryFn: () => api<{ ytdlp: boolean; hasLlm: boolean }>("/api/analyze/status"),
+    queryFn: () => api<{ ytdlp: boolean; hasLlm: boolean; hasVision: boolean }>("/api/analyze/status"),
   });
   const { data: reports } = useQuery({
     queryKey: ["analyze-reports"],
@@ -77,6 +77,9 @@ export function AnalyzePage() {
             <button className="ml-1 underline" onClick={() => navigate("/models")}>去配置 →</button>
           </div>
         )}
+        {status?.hasLlm && !status.hasVision && (
+          <p className="mb-3 text-[11px] text-fg-faint">当前文本模型不会看图，只能靠转写和抽帧时刻拆结构。到「模型」页勾选「能看图」会更准。</p>
+        )}
         {!status?.ytdlp && (
           <p className="mb-3 text-[11px] text-fg-faint">下载器还没打进项目。点分析时会自动补上；也可以先把视频导入资产库。</p>
         )}
@@ -102,6 +105,28 @@ export function AnalyzePage() {
           </button>
         </div>
         {error && <div className="mt-2 rounded-lg bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</div>}
+
+        <label className="mt-3 block cursor-pointer text-[11px] text-fg-faint underline hover:text-fg">
+          导入复刻模板 JSON
+          <input
+            type="file"
+            accept="application/json,.json"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (!f) return;
+              setError("");
+              try {
+                const raw = JSON.parse(await f.text()) as unknown;
+                await apiJson("/api/remake/templates/import", "post", raw);
+                qc.invalidateQueries({ queryKey: ["analyze-reports"] });
+              } catch (err) {
+                setError(err instanceof Error ? err.message : String(err));
+              }
+            }}
+          />
+        </label>
 
         <h2 className="mt-6 mb-2 text-xs font-medium text-fg-faint">最近报告</h2>
         <div className="space-y-1.5">
@@ -157,10 +182,31 @@ function ReportView(props: { report: AnalysisReport; onRemake: () => void }) {
               原片链接
             </a>
           )}
+          <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-fg-faint">
+            {report.usedVision && <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-violet-300">已让模型看画面</span>}
+            {(report.words?.length ?? 0) > 0 && <span className="rounded-full bg-sky-500/15 px-2 py-0.5 text-sky-300">词级转写 {report.words.length} 词</span>}
+          </div>
         </div>
-        <button className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-black hover:brightness-110" onClick={props.onRemake}>
-          换成我的主题做成片
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="rounded-lg border border-line px-3 py-2 text-xs text-fg-dim hover:text-fg"
+            onClick={async () => {
+              const tpl = await apiJson<RemakeTemplate>("/api/remake/from-report", "post", { reportId: report.id });
+              const data = await api<unknown>(`/api/remake/templates/${tpl.id}/export`);
+              const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `${tpl.name || "复刻模板"}.json`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+            }}
+          >
+            导出模板
+          </button>
+          <button className="rounded-lg bg-accent px-4 py-2 text-xs font-medium text-black hover:brightness-110" onClick={props.onRemake}>
+            换成我的主题做成片
+          </button>
+        </div>
       </div>
 
       {report.frames.length > 0 && (

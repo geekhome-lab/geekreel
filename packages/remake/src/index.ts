@@ -37,10 +37,29 @@ export function lineDurationMs(line: string, maxSec: number): number {
 
 export function assembleSubtitleClips(
   shots: Array<{ line: string; imagePrompt: string; maxSec: number }>,
+  opts?: {
+    originalShots?: Array<{ startMs: number; endMs: number; line: string }>;
+    words?: Array<{ word: string; startMs: number; endMs: number }>;
+  },
 ): Array<{ text: string; startMs: number; durationMs: number }> {
   let t = 0;
-  return shots.map((s) => {
-    const durationMs = lineDurationMs(s.line || s.imagePrompt, s.maxSec);
+  return shots.map((s, i) => {
+    const orig = opts?.originalShots?.[i];
+    let durationMs = lineDurationMs(s.line || s.imagePrompt, s.maxSec);
+    if (orig) {
+      const oldDur = Math.max(400, orig.endMs - orig.startMs);
+      if (opts?.words && opts.words.length > 0) {
+        const span = opts.words.filter((w) => w.startMs >= orig.startMs && w.startMs < orig.endMs);
+        if (span.length > 0) {
+          durationMs = Math.max(400, (span.at(-1)!.endMs - span[0]!.startMs) || oldDur);
+        } else {
+          durationMs = oldDur;
+        }
+      } else {
+        const ratio = Math.max(0.6, Math.min(1.8, Array.from(s.line || "").length / Math.max(1, Array.from(orig.line || "").length)));
+        durationMs = Math.round(oldDur * ratio);
+      }
+    }
     const clip = { text: s.line || s.imagePrompt.slice(0, 24), startMs: t, durationMs };
     t += durationMs;
     return clip;

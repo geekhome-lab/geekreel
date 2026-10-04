@@ -14,6 +14,7 @@ interface EndpointRow {
   capability: string;
   configJson: string;
   webSearch: number;
+  vision?: number;
   enabled: number;
   isDefault: number;
   createdAt: number;
@@ -38,6 +39,7 @@ function rowToEndpoint(row: EndpointRow, withKey = false): ModelEndpoint {
     capability: row.capability as Capability,
     config,
     webSearch: row.webSearch === 1,
+    vision: Number(row.vision) === 1,
     enabled: row.enabled === 1,
     isDefault: row.isDefault === 1,
     createdAt: row.createdAt,
@@ -64,6 +66,7 @@ export function createEndpoint(input: {
   capability: Capability;
   config: Record<string, string>;
   webSearch?: boolean;
+  vision?: boolean;
 }): ModelEndpoint {
   const id = newId();
   const config = { ...input.config };
@@ -76,9 +79,9 @@ export function createEndpoint(input: {
     delete config.secretKey;
   }
   db.run(
-    `INSERT INTO model_endpoints (id, name, adapterType, capability, configJson, webSearch, createdAt)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [id, input.name, input.adapterType, input.capability, JSON.stringify(config), input.webSearch ? 1 : 0, now()],
+    `INSERT INTO model_endpoints (id, name, adapterType, capability, configJson, webSearch, vision, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [id, input.name, input.adapterType, input.capability, JSON.stringify(config), input.webSearch ? 1 : 0, input.vision ? 1 : 0, now()],
   );
   return getEndpoint(id)!;
 }
@@ -89,6 +92,7 @@ export function updateEndpoint(
     name?: string;
     config?: Record<string, string>;
     webSearch?: boolean;
+    vision?: boolean;
     enabled?: boolean;
   },
 ): ModelEndpoint | null {
@@ -121,11 +125,12 @@ export function updateEndpoint(
   }
 
   db.run(
-    `UPDATE model_endpoints SET name = ?, configJson = ?, webSearch = ?, enabled = ? WHERE id = ?`,
+    `UPDATE model_endpoints SET name = ?, configJson = ?, webSearch = ?, vision = ?, enabled = ? WHERE id = ?`,
     [
       patch.name ?? existing.name,
       JSON.stringify(config),
       (patch.webSearch ?? existing.webSearch) ? 1 : 0,
+      (patch.vision ?? existing.vision) ? 1 : 0,
       (patch.enabled ?? existing.enabled) ? 1 : 0,
       id,
     ],

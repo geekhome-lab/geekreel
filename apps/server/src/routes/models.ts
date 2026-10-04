@@ -38,6 +38,7 @@ modelsRoutes.post("/endpoints", async (c) => {
     capability?: Capability;
     config?: Record<string, string>;
     webSearch?: boolean;
+    vision?: boolean;
   };
   if (!body.name?.trim()) return err(c, "请填写端点名称");
   if (!body.adapterType || !getAdapter(body.adapterType)) return err(c, "未知适配器");
@@ -55,6 +56,7 @@ modelsRoutes.post("/endpoints", async (c) => {
     capability: body.capability,
     config: body.config ?? {},
     webSearch: body.webSearch,
+    vision: body.vision,
   });
   return ok(c, ep);
 });
@@ -64,6 +66,7 @@ modelsRoutes.patch("/endpoints/:id", async (c) => {
     name?: string;
     config?: Record<string, string>;
     webSearch?: boolean;
+    vision?: boolean;
     enabled?: boolean;
   };
   const ep = updateEndpoint(c.req.param("id"), body);

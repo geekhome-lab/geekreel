@@ -416,6 +416,61 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         </div>
       </div>
 
+      {selected && (() => {
+        const clip = doc.tracks.flatMap((t) => t.clips).find((c) => c.id === selected);
+        const track = doc.tracks.find((t) => t.clips.some((c) => c.id === selected));
+        if (!clip || !track || track.type === "subtitle") return null;
+        return (
+          <div className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border border-line bg-panel px-3 py-2 text-[11px] text-fg-dim">
+            <span className="text-fg-faint">选中片段</span>
+            <label className="flex items-center gap-1.5">
+              变速
+              <select
+                className="rounded-md border border-line bg-panel-2 px-2 py-0.5"
+                value={clip.speed ?? 1}
+                onChange={(e) => {
+                  const speed = Number(e.target.value);
+                  update((d) => {
+                    for (const t of d.tracks) {
+                      const c = t.clips.find((x) => x.id === selected);
+                      if (c) c.speed = speed;
+                    }
+                    return d;
+                  });
+                }}
+              >
+                {[0.5, 0.75, 1, 1.25, 1.5, 2].map((n) => (
+                  <option key={n} value={n}>{n}×</option>
+                ))}
+              </select>
+            </label>
+            {track.type === "video" && (
+              <label className="flex items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  className="accent-amber-400"
+                  checked={clip.transition === "fade"}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    update((d) => {
+                      for (const t of d.tracks) {
+                        const c = t.clips.find((x) => x.id === selected);
+                        if (c) {
+                          c.transition = on ? "fade" : "none";
+                          c.transitionMs = on ? 400 : undefined;
+                        }
+                      }
+                      return d;
+                    });
+                  }}
+                />
+                淡入淡出
+              </label>
+            )}
+          </div>
+        );
+      })()}
+
       {/* 轨道区 */}
       <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-line bg-panel">
         {/* 标尺：左侧留出与轨名相同的 64px，点击位置才和片段对齐 */}

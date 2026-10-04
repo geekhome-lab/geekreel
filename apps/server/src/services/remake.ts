@@ -53,8 +53,15 @@ export function templateFromReport(reportId: string): RemakeTemplate {
   return getTemplate(id)!;
 }
 
-function writeRemakeTimeline(dir: string, shots: Array<{ line: string; imagePrompt: string; maxSec: number; slotId?: string }>) {
-  const clips = assembleSubtitleClips(shots);
+function writeRemakeTimeline(
+  dir: string,
+  shots: Array<{ line: string; imagePrompt: string; maxSec: number; slotId?: string }>,
+  align?: {
+    originalShots?: Array<{ startMs: number; endMs: number; line: string }>;
+    words?: Array<{ word: string; startMs: number; endMs: number }>;
+  },
+) {
+  const clips = assembleSubtitleClips(shots, align);
   const doc = emptyTimelineDoc();
   const sTrack = doc.tracks.find((t) => t.type === "subtitle")!;
   clips.forEach((c, i) => {
@@ -71,7 +78,14 @@ function writeRemakeTimeline(dir: string, shots: Array<{ line: string; imageProm
   writeFileSync(join(dir, "timeline", "main.json"), JSON.stringify(doc, null, 2));
 }
 
-function createProjectWithShots(name: string, shots: Array<{ imagePrompt: string; line: string; maxSec: number }>): { projectId: string; name: string } {
+function createProjectWithShots(
+  name: string,
+  shots: Array<{ imagePrompt: string; line: string; maxSec: number }>,
+  align?: {
+    originalShots?: Array<{ startMs: number; endMs: number; line: string }>;
+    words?: Array<{ word: string; startMs: number; endMs: number }>;
+  },
+): { projectId: string; name: string } {
   const id = newId();
   const d = new Date();
   const mmdd = `${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -104,7 +118,7 @@ function createProjectWithShots(name: string, shots: Array<{ imagePrompt: string
   db.run("INSERT INTO canvas_docs (id, projectId, name, path, updatedAt) VALUES (?, ?, ?, ?, ?)", [
     canvasId, id, "主画布", "canvas/主画布.json", t,
   ]);
-  writeRemakeTimeline(dir, shots);
+  writeRemakeTimeline(dir, shots, align);
   return { projectId: id, name };
 }
 
@@ -135,6 +149,7 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
 
   const variantCount = Math.min(6, Math.max(1, Math.round(payload.variantCount ?? 1)));
   const projects: Array<{ projectId: string; name: string; shotCount: number; runId: string }> = [];
+  const report = tpl.analysisId ? getReport(tpl.analysisId) : null;
 
   for (let i = 0; i < variantCount; i++) {
     ctx.progress(0.25 + (i / variantCount) * 0.7, variantCount > 1 ? `改写变体 ${i + 1}/${variantCount}` : "按你的主题改写分镜");
@@ -150,7 +165,10 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
     const shots = parseRemakeShots(text, tpl.doc);
     if (shots.length === 0) throw new Error("没有生成分镜");
     const suffix = variantCount > 1 ? `变体${i + 1}` : "";
-    const project = createProjectWithShots(sanitizeTitle(`${theme}${suffix}`, 16) || "复刻", shots);
+    const project = createProjectWithShots(sanitizeTitle(`${theme}${suffix}`, 16) || "复刻", shots, {
+      originalShots: report?.report.shots,
+      words: report?.words,
+    });
     const runId = newId();
     db.run(
       "INSERT INTO remake_runs (id, templateId, projectId, variablesJson, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
@@ -170,6 +188,48 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
     variantCount,
   };
 };
+
+export function exportTemplateJson(id: string): {
+  version: 1;
+  kind: "vw-remake-template";
+  name: string;
+  doc: RemakeTemplateDoc;
+  exportedAt: string;
+} {
+  const tpl = getTemplate(id);
+  if (!tpl) throw new Error("模板不存在");
+  return {
+    version: 1,
+    kind: "vw-remake-template",
+    name: tpl.name,
+    doc: tpl.doc,
+    exportedAt: new Date().toISOString(),
+  };
+}
+
+export function importTemplateJson(raw: unknown): RemakeTemplate {
+  const obj = (raw ?? {}) as Record<string, unknown>;
+  const doc = (obj.doc ?? obj.template ?? obj) as RemakeTemplateDoc;
+  if (!doc || !Array.isArray(doc.slots) || doc.slots.length === 0) {
+    throw new Error("这不是一份有效的复刻模板。请导入本工作台导出的 JSON。");
+  }
+  const name = String(obj.name ?? doc.name ?? "导入模板").trim() || "导入模板";
+  const id = newId();
+  const normalized: RemakeTemplateDoc = {
+    name: String(doc.name ?? name).trim() || name,
+    variables: Array.isArray(doc.variables) && doc.variables.length ? doc.variables.map((v) => String(v)) : ["主题", "产品", "人物设定"],
+    slots: doc.slots.map((s, i) => ({
+      id: String(s.id ?? `s${i}`),
+      maxSec: Math.max(1, Number(s.maxSec) || 3),
+      shotDesc: String(s.shotDesc ?? ""),
+      lineSlot: String(s.lineSlot ?? ""),
+    })),
+  };
+  db.run("INSERT INTO remake_templates (id, analysisId, name, slotsJson, createdAt) VALUES (?, ?, ?, ?, ?)", [
+    id, null, name, JSON.stringify(normalized), now(),
+  ]);
+  return getTemplate(id)!;
+}
 
 export function listRuns(): RemakeRun[] {
   const rows = db.query("SELECT * FROM remake_runs ORDER BY createdAt DESC LIMIT 30").all() as Array<{

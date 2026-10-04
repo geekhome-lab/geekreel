@@ -44,6 +44,12 @@ export interface AnalysisFrame {
   file: string;
 }
 
+export interface TranscriptWord {
+  word: string;
+  startMs: number;
+  endMs: number;
+}
+
 export interface AnalysisReport {
   id: string;
   sourceUrl: string | null;
@@ -52,6 +58,8 @@ export interface AnalysisReport {
   report: AnalysisReportDoc;
   frames: AnalysisFrame[];
   transcript: string | null;
+  words: TranscriptWord[];
+  usedVision: boolean;
   createdAt: number;
 }
 

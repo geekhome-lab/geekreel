@@ -34,6 +34,8 @@ export interface ModelEndpoint {
   /** 除 apiKey 外的明文配置 + apiKeyEnc 密文 */
   config: Record<string, string>;
   webSearch: boolean;
+  /** 文本端点能看图（分析读帧） */
+  vision: boolean;
   enabled: boolean;
   isDefault: boolean;
   createdAt: number;
@@ -66,6 +68,17 @@ export interface SpeechResult {
   mime: string;
 }
 
+export interface TranscriptWord {
+  word: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface TranscriptResult {
+  text: string;
+  words?: TranscriptWord[];
+}
+
 export interface VideoGenResult {
   data: Uint8Array;
   mime: string;
@@ -80,7 +93,12 @@ export interface ModelAdapter {
   test(config: Record<string, string>): Promise<TestResult>;
   chat?(
     config: Record<string, string>,
-    req: { prompt: string; system?: string; webSearch?: boolean },
+    req: {
+      prompt: string;
+      system?: string;
+      webSearch?: boolean;
+      images?: Array<{ mime: string; data: Uint8Array }>;
+    },
   ): Promise<ChatResult>;
   generateImage?(
     config: Record<string, string>,
@@ -97,7 +115,7 @@ export interface ModelAdapter {
   transcribe?(
     config: Record<string, string>,
     req: { data: Uint8Array; filename: string; mime?: string; signal?: AbortSignal },
-  ): Promise<string>;
+  ): Promise<TranscriptResult>;
 }
 
 export function estimateTokens(text: string): number {
@@ -136,6 +154,13 @@ export function computeCost(input: {
 // ---------------------------------------------------------------------------
 // OpenAI 兼容适配器：一套配置通吃 文本/图片/语音（DeepSeek、通义、豆包、智谱…）
 // ---------------------------------------------------------------------------
+
+function bytesToBase64(data: Uint8Array): string {
+  if (typeof Buffer !== "undefined") return Buffer.from(data).toString("base64");
+  let binary = "";
+  for (const byte of data) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
 
 function joinUrl(baseUrl: string, path: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${path}`;
@@ -189,9 +214,21 @@ export const openaiCompatible: ModelAdapter = {
   },
 
   async chat(config, req) {
+    const userContent =
+      req.images && req.images.length > 0
+        ? [
+            { type: "text", text: req.prompt },
+            ...req.images.slice(0, 6).map((img) => ({
+              type: "image_url",
+              image_url: {
+                url: `data:${img.mime || "image/jpeg"};base64,${bytesToBase64(img.data)}`,
+              },
+            })),
+          ]
+        : req.prompt;
     const messages = [
       ...(req.system ? [{ role: "system", content: req.system }] : []),
-      { role: "user", content: req.prompt },
+      { role: "user", content: userContent },
     ];
     const once = async (extra: Record<string, unknown> = {}) => {
       const res = await openaiFetch(config, "/chat/completions", {
@@ -279,6 +316,8 @@ export const openaiCompatible: ModelAdapter = {
     const file = new File([Buffer.from(req.data)], req.filename || "audio.wav", { type: req.mime || "audio/wav" });
     form.append("file", file);
     form.append("model", config.model || "whisper-1");
+    form.append("response_format", "verbose_json");
+    form.append("timestamp_granularities[]", "word");
     const res = await fetch(joinUrl(config.baseUrl ?? "", "/audio/transcriptions"), {
       method: "POST",
       headers: { Authorization: `Bearer ${config.apiKey ?? ""}` },
@@ -286,8 +325,22 @@ export const openaiCompatible: ModelAdapter = {
       signal: req.signal ?? null,
     });
     if (!res.ok) throw new Error(await readError(res));
-    const json = (await res.json()) as { text?: string };
-    return (json.text ?? "").trim();
+    const json = (await res.json()) as {
+      text?: string;
+      words?: Array<{ word?: string; start?: number; end?: number }>;
+      segments?: Array<{ words?: Array<{ word?: string; start?: number; end?: number }> }>;
+    };
+    const rawWords = json.words?.length
+      ? json.words
+      : json.segments?.flatMap((s) => s.words ?? []) ?? [];
+    const words = rawWords
+      .map((w) => ({
+        word: String(w.word ?? "").trim(),
+        startMs: Math.round((Number(w.start) || 0) * 1000),
+        endMs: Math.round((Number(w.end) || 0) * 1000),
+      }))
+      .filter((w) => w.word);
+    return { text: (json.text ?? "").trim(), words: words.length ? words : undefined };
   },
 
   generateVideo(config, req) {

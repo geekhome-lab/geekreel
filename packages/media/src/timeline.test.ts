@@ -50,6 +50,27 @@ test("buildRenderPlan：静帧 + 字幕生成 loop 输入与 concat", () => {
   expect(plan.args.join(" ")).toContain("concat=n=1");
 });
 
+test("buildRenderPlan：变速和淡入淡出会进滤镜", () => {
+  const doc = emptyTimelineDoc();
+  doc.tracks[0]!.clips.push({
+    id: "c1",
+    assetId: "vid1",
+    startMs: 0,
+    inMs: 0,
+    outMs: 4000,
+    volume: 1,
+    speed: 2,
+    transition: "fade",
+    transitionMs: 300,
+  });
+  const assets = new Map([["vid1", { absPath: "/tmp/a.mp4", hasAudio: false, isStill: false }]]);
+  const plan = buildRenderPlan(doc, assets, { burnSubs: false, outPath: "/tmp/out.mp4" });
+  const fc = plan.args[plan.args.indexOf("-filter_complex") + 1] ?? "";
+  expect(fc).toContain("setpts=(PTS-STARTPTS)/2");
+  expect(fc).toContain("fade=t=in");
+  expect(plan.outputDurationMs).toBe(2000);
+});
+
 test("executeRender E2E：两张静帧 + 一段视频 + SRT 导出可播 mp4", async () => {
   const bins = await detectBins();
   expect(bins.available && bins.ffmpeg && bins.ffprobe).toBeTruthy();

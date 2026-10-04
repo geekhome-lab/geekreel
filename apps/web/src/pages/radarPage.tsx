@@ -26,7 +26,7 @@ export function RadarPage() {
   const navigate = useNavigate();
   const { data: status } = useQuery({
     queryKey: ["radar-status"],
-    queryFn: () => api<{ hasWebSearchLlm: boolean }>("/api/radar/status"),
+    queryFn: () => api<{ hasWebSearchLlm: boolean; hasFeedSources: boolean }>("/api/radar/status"),
   });
 
   return (
@@ -34,15 +34,15 @@ export function RadarPage() {
       <div className="mb-5">
         <h1 className="text-lg font-semibold">热点雷达</h1>
         <p className="mt-0.5 text-xs text-fg-faint">
-          用你配置的联网文本模型去查各平台在聊什么。热度是 AI 估计，不是官方榜。
+          用联网文本模型查热点，或直接拉 RSS / 公开接口。AI 源的热度是估计，不是官方榜。
         </p>
       </div>
 
-      {status && !status.hasWebSearchLlm && (
+      {status && !status.hasWebSearchLlm && !status.hasFeedSources && (
         <div className="mb-4 rounded-xl border border-amber-900/50 bg-amber-950/30 px-4 py-3 text-xs text-amber-200">
-          还没有会联网的文本模型，雷达查不到真热点。
+          还没有会联网的文本模型。可以去模型页勾选「支持联网搜索」，或在「我的关注」里加 RSS / 接口源。
           <button className="ml-2 underline hover:text-amber-100" onClick={() => navigate("/models")}>
-            去模型页添加，并勾选「支持联网搜索」→
+            去模型页 →
           </button>
         </div>
       )}
@@ -65,7 +65,7 @@ export function RadarPage() {
         ))}
       </div>
 
-      {tab === "board" && <BoardPane canFetch={!!status?.hasWebSearchLlm} />}
+      {tab === "board" && <BoardPane canFetch={!!status?.hasWebSearchLlm || !!status?.hasFeedSources} />}
       {tab === "watch" && <WatchPane />}
       {tab === "push" && <PushPane />}
     </div>
@@ -230,6 +230,9 @@ function WatchPane() {
               <label className="flex items-center gap-2 text-sm">
                 <input type="checkbox" className="accent-amber-400" checked={s.enabled} onChange={() => toggleSrc.mutate(s)} />
                 {s.name}
+                <span className="text-[10px] text-fg-faint">
+                  {s.kind === "rss" ? "RSS" : s.kind === "http-api" ? "接口" : "AI"}
+                </span>
               </label>
               <select
                 className="ml-auto rounded-md border border-line bg-panel-2 px-2 py-1 text-[11px] text-fg-dim"
@@ -289,31 +292,62 @@ function WatchPane() {
 
 function AddSourceInline() {
   const qc = useQueryClient();
+  const [kind, setKind] = useState<"ai-query" | "rss" | "http-api">("ai-query");
   const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
   const mut = useMutation({
-    mutationFn: () => apiJson("/api/radar/sources", "post", { name, focus: name }),
+    mutationFn: () =>
+      apiJson("/api/radar/sources", "post", {
+        name,
+        kind,
+        focus: kind === "ai-query" ? name : undefined,
+        queryTemplate: kind === "ai-query" ? undefined : url,
+      }),
     onSuccess: () => {
       setName("");
+      setUrl("");
       qc.invalidateQueries({ queryKey: ["radar-sources"] });
+      qc.invalidateQueries({ queryKey: ["radar-status"] });
     },
   });
+  const canSubmit = name.trim() && (kind === "ai-query" || /^https?:\/\//i.test(url.trim()));
   return (
     <form
-      className="mt-3 flex gap-2"
+      className="mt-3 space-y-2"
       onSubmit={(e) => {
         e.preventDefault();
-        if (name.trim()) mut.mutate();
+        if (canSubmit) mut.mutate();
       }}
     >
-      <input
-        className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-xs outline-none focus:border-accent-dim"
-        placeholder="再加一个领域，比如「电商」「AI」"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-      />
-      <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim hover:text-fg" disabled={!name.trim()}>
-        添加观察
-      </button>
+      <div className="flex gap-2">
+        <select
+          className="rounded-lg border border-line bg-panel-2 px-2 py-1.5 text-xs text-fg-dim"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as "ai-query" | "rss" | "http-api")}
+        >
+          <option value="ai-query">AI 观察</option>
+          <option value="rss">RSS</option>
+          <option value="http-api">接口</option>
+        </select>
+        <input
+          className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-xs outline-none focus:border-accent-dim"
+          placeholder={kind === "ai-query" ? "再加一个领域，比如「电商」「AI」" : "给这个源起个名字"}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim hover:text-fg" disabled={!canSubmit}>
+          添加观察
+        </button>
+      </div>
+      {kind !== "ai-query" && (
+        <input
+          className="w-full rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-xs outline-none focus:border-accent-dim"
+          placeholder={kind === "rss" ? "https://…/feed.xml" : "https://…/hot.json"}
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+        />
+      )}
+      {mut.error && <p className="text-[11px] text-red-400">{mut.error instanceof Error ? mut.error.message : String(mut.error)}</p>}
     </form>
   );
 }

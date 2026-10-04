@@ -1,7 +1,9 @@
 /**
  * 时间线领域模型 + SRT 工具（纯函数，前后端共享）。
- * M3 范围：1 条视频轨 + N 条音频轨 + 1 条字幕轨；硬切，无转场。
+ * 视频/音频/字幕轨；片段可变速，淡入淡出可选。
  */
+
+export type TimelineTransition = "none" | "fade";
 
 export interface TimelineClip {
   id: string;
@@ -16,6 +18,12 @@ export interface TimelineClip {
   outMs: number;
   /** 音量 0-1，默认 1 */
   volume: number;
+  /** 播放倍速，默认 1 */
+  speed?: number;
+  /** 片段淡入淡出，默认硬切 */
+  transition?: TimelineTransition;
+  /** 淡入淡出时长 ms，默认 400 */
+  transitionMs?: number;
 }
 
 export interface TimelineTrack {
@@ -45,8 +53,13 @@ export function emptyTimelineDoc(): TimelineDoc {
   };
 }
 
+export function clipSpeed(c: TimelineClip): number {
+  const s = c.speed && c.speed > 0 ? c.speed : 1;
+  return Math.max(0.25, Math.min(4, s));
+}
+
 export function clipDuration(c: TimelineClip): number {
-  return c.outMs - c.inMs;
+  return Math.max(1, Math.round((c.outMs - c.inMs) / clipSpeed(c)));
 }
 
 /** 时间线总时长：所有轨道的最远端 */

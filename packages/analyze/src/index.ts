@@ -21,7 +21,7 @@ import type { AnalysisReportDoc, RemakeTemplateDoc } from "@vw/core";
 import { runFfmpeg } from "@vw/media";
 
 export const ANALYZE_SYSTEM =
-  "你是短视频拆解教练。根据提供的素材信息做结构化分析，不要编造具体台词（没有转写就写「未见转写」）。只输出 JSON。";
+  "你是短视频拆解教练。根据提供的素材信息做结构化分析，不要编造具体台词（没有转写就写「未见转写」）。如果附带了抽帧图片，必须根据画面写 visual，不要只靠时刻表瞎猜。只输出 JSON。";
 
 export function analysisPrompt(input: {
   title: string;
@@ -29,6 +29,7 @@ export function analysisPrompt(input: {
   frames: Array<{ tMs: number }>;
   transcript: string | null;
   sourceUrl: string | null;
+  withImages?: boolean;
 }): string {
   const frameList = input.frames.map((f) => `${(f.tMs / 1000).toFixed(1)}s`).join(", ");
   return `请拆解这条短视频，输出 JSON：
@@ -39,7 +40,8 @@ export function analysisPrompt(input: {
 时长：${(input.durationMs / 1000).toFixed(1)} 秒
 链接：${input.sourceUrl ?? "本地文件"}
 抽帧时刻：${frameList || "无"}
-转写：${input.transcript?.trim() || "（无转写，请只根据时长和抽帧节奏推断结构，台词写未见转写）"}`;
+${input.withImages ? "已附上对应时刻的画面截图，请按图描述 visual。" : "没有附带画面，只根据时长和抽帧节奏推断结构。"}
+转写：${input.transcript?.trim() || "（无转写，台词写未见转写）"}`;
 }
 
 export function parseAnalysisReport(text: string): AnalysisReportDoc {

@@ -1,10 +1,13 @@
 /**
  * @vw/radar —— AI 查询源模板、解析、去重、订阅匹配。
- * 默认 kind=ai-query；rss / http-api 仅留接口，本期不实现。
+ * kind=ai-query 用联网文本模型；rss / http-api 直接拉公开源。
  */
+
+export { parseHttpItems, parseRss, type ParsedRadarItem } from "./feeds";
 
 import { createHash } from "node:crypto";
 import type { RadarItem, RadarSub } from "@vw/core";
+import type { ParsedRadarItem } from "./feeds";
 
 export interface SourceTemplate {
   id: string;
@@ -59,15 +62,6 @@ export const sourceTemplates: SourceTemplate[] = [
 
 export const RADAR_SYSTEM =
   "你是热点观察助手。你必须基于此刻互联网上的真实公开信息作答，禁止编造。热度 heat 是估计值（0–100）。";
-
-export interface ParsedRadarItem {
-  title: string;
-  platform: string;
-  url: string | null;
-  heat: number;
-  heatText: string;
-  summary: string;
-}
 
 export function itemHash(title: string, platform: string, url: string | null): string {
   const n = title.trim().toLowerCase().replace(/\s+/g, "");

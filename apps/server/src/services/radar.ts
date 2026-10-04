@@ -1,4 +1,4 @@
-import { sanitizeTitle, type RadarItem, type RadarSettings, type RadarSource, type RadarSub } from "@vw/core";
+import { sanitizeTitle, type RadarItem, type RadarSettings, type RadarSource, type RadarSourceKind, type RadarSub } from "@vw/core";
 import { getAdapter } from "@vw/models";
 import {
   RADAR_SYSTEM,
@@ -7,8 +7,11 @@ import {
   isDue,
   itemHash,
   matchSubscription,
+  parseHttpItems,
   parseRadarResponse,
+  parseRss,
   sourceTemplates,
+  type ParsedRadarItem,
 } from "@vw/radar";
 import { host, port } from "../config";
 import { db, getSetting, setSetting } from "../db";
@@ -115,6 +118,7 @@ export function getSource(id: string): RadarSource | null {
 
 export function createSource(input: {
   name: string;
+  kind?: RadarSourceKind;
   platform?: string;
   focus?: string;
   queryTemplate?: string;
@@ -122,12 +126,21 @@ export function createSource(input: {
   endpointId?: string | null;
 }): RadarSource {
   const id = newId();
+  const kind: RadarSourceKind = input.kind === "rss" || input.kind === "http-api" ? input.kind : "ai-query";
   const platform = input.platform?.trim() || input.name.trim();
-  const queryTemplate = input.queryTemplate?.trim() || buildFocusTemplate(input.focus || input.name);
+  const queryTemplate =
+    kind === "ai-query"
+      ? input.queryTemplate?.trim() || buildFocusTemplate(input.focus || input.name)
+      : (input.queryTemplate?.trim() || input.focus?.trim() || "");
+  if (kind !== "ai-query") {
+    if (!/^https?:\/\//i.test(queryTemplate)) {
+      throw new Error(kind === "rss" ? "请填写可访问的 RSS 链接" : "请填写可访问的接口地址");
+    }
+  }
   db.run(
     `INSERT INTO radar_sources (id, name, kind, platform, queryTemplate, intervalMinutes, endpointId, enabled, createdAt)
-     VALUES (?, ?, 'ai-query', ?, ?, ?, ?, 1, ?)`,
-    [id, input.name.trim(), platform, queryTemplate, input.intervalMinutes ?? 360, input.endpointId ?? null, now()],
+     VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+    [id, input.name.trim(), kind, platform, queryTemplate, input.intervalMinutes ?? 360, input.endpointId ?? null, now()],
   );
   return getSource(id)!;
 }
@@ -253,6 +266,55 @@ export function hasWebSearchLlm(): boolean {
   return listEndpoints("llm").some((e) => e.enabled && e.webSearch);
 }
 
+export function hasFeedSources(): boolean {
+  return listSources().some((s) => s.enabled && s.kind !== "ai-query");
+}
+
+async function insertParsedItems(source: RadarSource, parsed: ParsedRadarItem[]): Promise<number> {
+  let inserted = 0;
+  for (const p of parsed) {
+    const hash = itemHash(p.title, p.platform, p.url);
+    const exists = db.query("SELECT id FROM radar_items WHERE hash = ?").get(hash) as { id: string } | null;
+    if (exists) continue;
+    const item: RadarItem = {
+      id: newId(),
+      sourceId: source.id,
+      title: p.title,
+      platform: p.platform,
+      url: p.url,
+      heat: p.heat,
+      heatText: p.heatText,
+      summary: p.summary,
+      hash,
+      fetchedAt: now(),
+    };
+    db.run(
+      `INSERT INTO radar_items (id, sourceId, title, platform, url, heat, heatText, summary, hash, fetchedAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [item.id, item.sourceId, item.title, item.platform, item.url, item.heat, item.heatText, item.summary, item.hash, item.fetchedAt],
+    );
+    wsHub.broadcast({ type: "radar.upsert", item });
+    inserted++;
+    await notifyHits(item);
+  }
+  return inserted;
+}
+
+async function fetchFeedItems(source: RadarSource): Promise<ParsedRadarItem[]> {
+  const url = source.queryTemplate.trim();
+  if (!/^https?:\/\//i.test(url)) throw new Error("这个源没有有效的链接");
+  const res = await fetch(url, { headers: { Accept: source.kind === "rss" ? "application/rss+xml, application/atom+xml, text/xml, */*" : "application/json" } });
+  if (!res.ok) throw new Error(`拉取失败（${res.status}）。换一条公开链接再试。`);
+  if (source.kind === "rss") {
+    const xml = await res.text();
+    const items = parseRss(xml, source.platform);
+    if (items.length === 0) throw new Error("这个 RSS 里没有条目");
+    return items;
+  }
+  const json = await res.json();
+  return parseHttpItems(json, source.platform);
+}
+
 export function resolveRadarLlm(preferredId?: string | null) {
   if (preferredId) {
     const ep = resolveEndpoint("llm", preferredId);
@@ -306,53 +368,33 @@ const runFetch: JobHandler = async (job, ctx) => {
   const { sourceId } = JSON.parse(job.payloadJson) as { sourceId: string };
   const source = getSource(sourceId);
   if (!source) throw new Error("观察源不存在");
-  if (source.kind !== "ai-query") throw new Error("这类源还没接上，本期只用 AI 联网查询");
 
-  ctx.progress(0.1, "找联网文本模型");
-  const endpoint = resolveRadarLlm(source.endpointId);
-  const adapter = getAdapter(endpoint.adapterType);
-  if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
+  let parsed: ParsedRadarItem[];
+  if (source.kind === "rss" || source.kind === "http-api") {
+    ctx.progress(0.2, source.kind === "rss" ? "拉取 RSS" : "拉取接口");
+    parsed = await fetchFeedItems(source);
+  } else {
+    ctx.progress(0.1, "找联网文本模型");
+    const endpoint = resolveRadarLlm(source.endpointId);
+    const adapter = getAdapter(endpoint.adapterType);
+    if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
-  ctx.progress(0.25, `正在问 ${endpoint.name}`);
-  const text = await chatMetered(
-    adapter,
-    endpoint,
-    {
-      system: RADAR_SYSTEM,
-      prompt: source.queryTemplate,
-      webSearch: true,
-    },
-    { jobType: "radar.fetch" },
-  );
+    ctx.progress(0.25, `正在问 ${endpoint.name}`);
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: RADAR_SYSTEM,
+        prompt: source.queryTemplate,
+        webSearch: true,
+      },
+      { jobType: "radar.fetch" },
+    );
+    parsed = parseRadarResponse(text, source.platform);
+  }
 
   ctx.progress(0.7, "整理热点");
-  const parsed = parseRadarResponse(text, source.platform);
-  let inserted = 0;
-  for (const p of parsed) {
-    const hash = itemHash(p.title, p.platform, p.url);
-    const exists = db.query("SELECT id FROM radar_items WHERE hash = ?").get(hash) as { id: string } | null;
-    if (exists) continue;
-    const item: RadarItem = {
-      id: newId(),
-      sourceId: source.id,
-      title: p.title,
-      platform: p.platform,
-      url: p.url,
-      heat: p.heat,
-      heatText: p.heatText,
-      summary: p.summary,
-      hash,
-      fetchedAt: now(),
-    };
-    db.run(
-      `INSERT INTO radar_items (id, sourceId, title, platform, url, heat, heatText, summary, hash, fetchedAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [item.id, item.sourceId, item.title, item.platform, item.url, item.heat, item.heatText, item.summary, item.hash, item.fetchedAt],
-    );
-    wsHub.broadcast({ type: "radar.upsert", item });
-    inserted++;
-    await notifyHits(item);
-  }
+  const inserted = await insertParsedItems(source, parsed);
 
   db.run("UPDATE radar_sources SET lastRunAt = ?, lastError = NULL WHERE id = ?", [now(), source.id]);
   ctx.progress(1, `新增 ${inserted} 条`);

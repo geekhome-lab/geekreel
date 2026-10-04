@@ -1,6 +1,6 @@
 # 视频工作台（Video Workbench）设计文档
 
-> 版本：v0.10 · 更新日期：2026-10-04
+> 版本：v0.11 · 更新日期：2026-10-04
 > 概念参考：Toonflow-app（画布/工作区）、Hypit（爆款复刻）、smy-seedance-storyboard（上美影风）、srt-whiteboard-animation（白板动画）。仅借鉴思路，架构与代码自研。
 
 ---
@@ -135,10 +135,11 @@ React Flow 无限画布。节点类型：
 ### 3.5 时间线
 
 - **M3 已落地**：1 条视频轨 + N 条音频轨 + 1 条字幕轨；硬切（无转场）；图片按静帧 loop 上视频轨。
-- 片段 = 资产引用 + in/out + 音量；字幕片段带文本，支持 SRT 导入。
+- **M11**：片段可设变速（0.5×–2×）与淡入淡出；导出进 ffmpeg `setpts` / `atempo` / `fade`。
+- 片段 = 资产引用 + in/out + 音量 + 可选 speed/transition；字幕片段带文本，支持 SRT 导入。
 - 小白路径：画布出图后点「送到时间线」/「从画布装上」——文生图节点按从左到右排成镜头，对应文本写成字幕。
 - 预览：浏览器时钟驱动播放头，视频走代理、静帧走原图；导出走 bundled ffmpeg `filter_complex` 进任务队列，成片写入项目 `export/` 并收入资产库。
-- 后续：转场/变速/滤镜、TTS 自动字幕、词级对齐（WhisperX/faster-whisper sidecar，可选）。
+- 词级对齐走 Whisper API（verbose_json），不再依赖 Python sidecar。远期可加滤镜。
 
 ### 3.6 模型配置中心（Model Center）
 
@@ -163,6 +164,7 @@ interface ModelEndpoint {
   baseUrl?: string; apiKey?: string; model?: string;
   defaultParams?: Record<string, unknown>;
   webSearch?: boolean;             // 文本端点标记：支持联网搜索（雷达依赖此能力）
+  vision?: boolean;                // 文本端点能看图（分析读帧）
   enabled: boolean;
 }
 ```
@@ -186,7 +188,7 @@ interface ModelEndpoint {
 ```
 
 - **内置源模板**（都是 prompt 模板，开箱即用）：微博热搜、抖音热点、B站热门、知乎热榜、小红书热点 + 领域观察（科技/财经/电商/娱乐…），用户可改模板或自建源。
-- **源插件接口保留扩展口**：`kind: "ai-query"` 为默认实现；接口预留 `rss` / `http-api` 类型，未来想接 RSSHub 或任何 API 源只需加一个适配器，不动主流程。
+- **源种类**：`ai-query`（联网文本模型）/ `rss`（公开 RSS/Atom）/ `http-api`（返回 `{ items: [{ title, url, heat, summary }] }` 的 JSON）。刷新时只有 AI 源才要求联网模型。
 - **热度取舍**：热度值为模型估计（0–100）并附原文描述（如"热搜第 3"），UI 标注「AI 估计」；准确性依赖所选模型的联网能力——这是用简洁架构换掉的精度，文档明示。
 - 端点不支持联网时，该源给出明确错误并引导去模型中心换端点。
 
@@ -208,8 +210,8 @@ interface ModelEndpoint {
 ```
 下载(yt-dlp) → 元数据(时长/分辨率/发布信息)
   → 场景切分抽帧(ffmpeg scene detect，每场景代表帧)
-  → 语音转写(Whisper API 或 faster-whisper sidecar，词级时间戳)
-  → LLM 结构化分析(文本模型，可选多模态端点读帧)
+  → 语音转写(Whisper API verbose_json，词级时间戳)
+  → LLM 结构化分析(文本模型；端点勾选 vision 时把抽帧 JPEG 一并送去)
 ```
 
 **分析报告**（结构化 JSON + 可视化报告页）：
@@ -496,6 +498,7 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 | **M8 成本 / 配音 / 便携**（已落地） | 用量记账×单价成本看板、OpenAI 兼容 TTS/转写、时间线字幕配音、资产库搬家、删除引用检查、换机启动脚本 | 模型页能看到花费；字幕一键配音；`./scripts/start.sh` 换机可跑 |
 | **M9 引导式首页 + 连载**（已落地） | 小说转短剧独立页（上传/链接）；首页自由创作/复刻一步确认；连载锁风格与人物资产 | 子风格不再挂在首页按钮旁；下一集接到同一部连载 |
 | **M10 画布补齐 + 复刻变体 + 资产整理**（已落地） | 文生视频/配音/ffmpeg 节点；可灵与豆包视频适配器；资产标签收藏用途；复刻一变体多并按台词装时间线；短剧拆完先确认再搭画布 | 画布能出视频和配音；分析页一次开多个变体；小说拆集后可确认或重拆 |
+| **M11 读帧 / 词级 / 雷达源 / 时间线**（已落地） | 文本端点 vision 读抽帧；Whisper 词级时间戳并按原镜对齐复刻；雷达 RSS/HTTP API；复刻模板 JSON 导出导入；时间线变速与淡入淡出 | 勾选「能看图」后报告标注已看画面；导入 RSS 也能刷新榜；选中片段可改倍速 |
 
 ---
 
@@ -504,6 +507,6 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 1. 密钥存储：SQLite 对称加密 vs 系统 Keychain（第一版先对称加密 + 回环绑定）。
 2. AI 热点的热度呈现：除「AI 估计」标注外，是否让模型同时给出原文热度描述（如"热搜第3"）一并展示？（当前设计：都展示）
 3. 白板渲染器：已决定不用 Python sidecar。M7 用项目自带 ffmpeg 出纸底+字幕；有图模型再走画布换线稿。
-4. 竞品分析的多模态读帧：用哪家 VLM——走模型中心，用户自选（端点加 `vision` 标记）。
-5. 复刻模板的「词级锚定」精度：第一版 Whisper 词级时间戳 + 按台词时长等比装配，是否够用。
+4. 竞品分析的多模态读帧：已走模型中心 `vision` 标记，用户自选能看图的文本端点。
+5. 复刻模板的「词级锚定」精度：第一版 Whisper 词级 + 原镜时长等比；不够再考虑 sidecar。
 6. 资产库迁移时大库（几十 GB）的移动策略：后台 Job 断点续传式迁移，还是先只支持小库迁移、大库引导手动搬？

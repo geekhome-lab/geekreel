@@ -3,7 +3,7 @@
  * buildRenderPlan 是纯函数（可测），executeRender 负责执行与进度。
  */
 
-import { clipDuration, subtitleTrack, timelineDuration, type TimelineDoc } from "@vw/core";
+import { clipDuration, clipSpeed, subtitleTrack, timelineDuration, type TimelineClip, type TimelineDoc } from "@vw/core";
 import { runFfmpeg } from "./index";
 
 export interface RenderAssetInfo {
@@ -23,6 +23,28 @@ export interface RenderPlan {
 
 function escapeFilterPath(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
+}
+
+function fadeFilter(c: TimelineClip, durSec: number): string {
+  if (c.transition !== "fade" || durSec <= 0.08) return "";
+  const d = Math.min((c.transitionMs ?? 400) / 1000, durSec / 2);
+  return `,fade=t=in:st=0:d=${d.toFixed(3)},fade=t=out:st=${Math.max(0, durSec - d).toFixed(3)}:d=${d.toFixed(3)}`;
+}
+
+/** atempo 只接受 0.5–2，超出就串起来 */
+function atempoChain(speed: number): string {
+  const parts: string[] = [];
+  let s = speed;
+  while (s > 2.0001) {
+    parts.push("atempo=2.0");
+    s /= 2;
+  }
+  while (s < 0.499) {
+    parts.push("atempo=0.5");
+    s /= 0.5;
+  }
+  parts.push(`atempo=${s.toFixed(3)}`);
+  return parts.join(",");
 }
 
 /**
@@ -61,21 +83,24 @@ export function buildRenderPlan(
 
   const filters: string[] = [];
 
-  // ---- 视频链：trim → 统一画布 → concat ----
+  // ---- 视频链：trim → 变速 → 统一画布 → 淡入淡出 → concat ----
   vClips.forEach((c, i) => {
     const k = needInput(c.assetId!);
     const info = assets.get(c.assetId!)!;
+    const speed = clipSpeed(c);
+    const durSec = clipDuration(c) / 1000;
+    const fade = fadeFilter(c, durSec);
     const scalePad =
       `scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2,` +
       `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2,fps=30,setsar=1`;
     if (info.isStill) {
-      const dur = (clipDuration(c) / 1000).toFixed(3);
-      // 输入侧已 -loop 1，这里按片段时长裁
-      filters.push(`[${k}:v]fps=30,trim=duration=${dur},setpts=PTS-STARTPTS,${scalePad}[v${i}]`);
+      const dur = durSec.toFixed(3);
+      filters.push(`[${k}:v]fps=30,trim=duration=${dur},setpts=PTS-STARTPTS,${scalePad}${fade}[v${i}]`);
     } else {
       const inS = (c.inMs / 1000).toFixed(3);
       const outS = (c.outMs / 1000).toFixed(3);
-      filters.push(`[${k}:v]trim=start=${inS}:end=${outS},setpts=PTS-STARTPTS,${scalePad}[v${i}]`);
+      const pts = speed === 1 ? "setpts=PTS-STARTPTS" : `setpts=(PTS-STARTPTS)/${speed}`;
+      filters.push(`[${k}:v]trim=start=${inS}:end=${outS},${pts},${scalePad}${fade}[v${i}]`);
     }
   });
   filters.push(`${vClips.map((_, i) => `[v${i}]`).join("")}concat=n=${vClips.length}:v=1:a=0[vcat]`);
@@ -101,9 +126,11 @@ export function buildRenderPlan(
   const vaClips = vClips.filter((c) => (c.volume ?? 1) > 0 && assets.get(c.assetId!)?.hasAudio);
   vaClips.forEach((c, i) => {
     const k = needInput(c.assetId!);
+    const speed = clipSpeed(c);
+    const tempo = speed === 1 ? "" : `,${atempoChain(speed)}`;
     filters.push(
       `[${k}:a]atrim=start=${(c.inMs / 1000).toFixed(3)}:end=${(c.outMs / 1000).toFixed(3)},` +
-        `asetpts=PTS-STARTPTS,volume=${(c.volume ?? 1).toFixed(2)}[va${i}]`,
+        `asetpts=PTS-STARTPTS${tempo},volume=${(c.volume ?? 1).toFixed(2)}[va${i}]`,
     );
   });
   if (vaClips.length === 1) {
@@ -120,9 +147,11 @@ export function buildRenderPlan(
       if (!c.assetId || !assets.has(c.assetId)) throw new Error("音频片段引用的资产不存在");
       const k = needInput(c.assetId!);
       const delay = Math.max(0, Math.round(c.startMs));
+      const speed = clipSpeed(c);
+      const tempo = speed === 1 ? "" : `,${atempoChain(speed)}`;
       filters.push(
         `[${k}:a]atrim=start=${(c.inMs / 1000).toFixed(3)}:end=${(c.outMs / 1000).toFixed(3)},` +
-          `asetpts=PTS-STARTPTS,volume=${(c.volume ?? 1).toFixed(2)},adelay=${delay}|${delay}[ta${ai}]`,
+          `asetpts=PTS-STARTPTS${tempo},volume=${(c.volume ?? 1).toFixed(2)},adelay=${delay}|${delay}[ta${ai}]`,
       );
       audioLabels.push(`ta${ai}`);
       ai++;
