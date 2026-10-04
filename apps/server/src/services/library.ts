@@ -5,6 +5,7 @@ import {
   parseAssetFileName,
   sanitizeTitle,
   type Asset,
+  type AssetKind,
   type AssetSource,
   type AssetType,
 } from "@vw/core";
@@ -49,13 +50,68 @@ export function proxyAbs(assetId: string): string {
 // 行 ↔ 对象
 // ---------------------------------------------------------------------------
 
-export function rowToAsset(row: Record<string, unknown>): Asset {
-  return row as unknown as Asset;
+export function tagsFor(assetId: string): string[] {
+  return (db.query("SELECT tag FROM asset_tags WHERE assetId = ? ORDER BY tag").all(assetId) as Array<{ tag: string }>).map((r) => r.tag);
+}
+
+function tagsByIds(ids: string[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  if (ids.length === 0) return map;
+  const ph = ids.map(() => "?").join(",");
+  const rows = db.query(`SELECT assetId, tag FROM asset_tags WHERE assetId IN (${ph})`).all(...ids) as Array<{ assetId: string; tag: string }>;
+  for (const r of rows) {
+    const list = map.get(r.assetId) ?? [];
+    list.push(r.tag);
+    map.set(r.assetId, list);
+  }
+  return map;
+}
+
+export function rowToAsset(row: Record<string, unknown>, tags?: string[]): Asset {
+  return {
+    ...(row as unknown as Asset),
+    favorite: Number(row.favorite) === 1,
+    kind: ((row.kind as AssetKind) || "generic") as AssetKind,
+    tags: tags ?? tagsFor(String(row.id)),
+  };
+}
+
+export function hydrateAssets(rows: Record<string, unknown>[]): Asset[] {
+  const tags = tagsByIds(rows.map((r) => String(r.id)));
+  return rows.map((r) => rowToAsset(r, tags.get(String(r.id)) ?? []));
 }
 
 export function getAsset(id: string): Asset | null {
   const row = db.query("SELECT * FROM assets WHERE id = ?").get(id) as Record<string, unknown> | null;
   return row ? rowToAsset(row) : null;
+}
+
+export function updateAssetMeta(
+  id: string,
+  patch: { title?: string; favorite?: boolean; kind?: AssetKind; tags?: string[] },
+): Asset {
+  const asset = getAsset(id);
+  if (!asset) throw new Error("资产不存在");
+  if (patch.title?.trim() && patch.title.trim() !== asset.title) renameAsset(id, patch.title);
+  if (patch.favorite !== undefined) {
+    db.run("UPDATE assets SET favorite = ? WHERE id = ?", [patch.favorite ? 1 : 0, id]);
+  }
+  if (patch.kind) {
+    db.run("UPDATE assets SET kind = ? WHERE id = ?", [patch.kind, id]);
+  }
+  if (patch.tags) {
+    db.run("DELETE FROM asset_tags WHERE assetId = ?", [id]);
+    const seen = new Set<string>();
+    for (const raw of patch.tags) {
+      const tag = raw.trim().slice(0, 24);
+      if (!tag || seen.has(tag)) continue;
+      seen.add(tag);
+      db.run("INSERT INTO asset_tags (assetId, tag) VALUES (?, ?)", [id, tag]);
+    }
+  }
+  const next = getAsset(id)!;
+  broadcastAsset(next);
+  return next;
 }
 
 export function broadcastAsset(asset: Asset) {

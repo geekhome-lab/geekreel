@@ -16,18 +16,31 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset } from "@vw/core";
+import type { Asset, PipelineRun } from "@vw/core";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { submitImageGen, waitForJob } from "../lib/runGen";
+import { submitFfmpeg, submitImageGen, submitTts, submitVideoGen, waitForJob } from "../lib/runGen";
 import { iconPlus } from "../lib/icons";
 import { CanvasActionsContext } from "../components/canvas/canvasContext";
 import { TextNode, type TextNodeData } from "../components/canvas/textNode";
 import { AssetNode, type AssetNodeData } from "../components/canvas/assetNode";
 import { ImageGenNode, type ImageGenNodeData } from "../components/canvas/imageGenNode";
+import { VideoGenNode, type VideoGenNodeData } from "../components/canvas/videoGenNode";
+import { TtsNode, type TtsNodeData } from "../components/canvas/ttsNode";
+import { FfmpegNode, type FfmpegNodeData } from "../components/canvas/ffmpegNode";
 import { AssetPickerModal } from "../components/canvas/assetPickerModal";
 
-const nodeTypes = { textNode: TextNode, assetNode: AssetNode, imageGenNode: ImageGenNode };
+const GEN_TYPES = new Set(["imageGenNode", "videoGenNode", "ttsNode", "ffmpegNode"]);
+
+const nodeTypes = {
+  textNode: TextNode,
+  assetNode: AssetNode,
+  imageGenNode: ImageGenNode,
+  videoGenNode: VideoGenNode,
+  ttsNode: TtsNode,
+  ffmpegNode: FfmpegNode,
+};
 
 interface CanvasMeta {
   id: string;
@@ -51,7 +64,13 @@ function newNodeId() {
 
 function CanvasInner(props: { projectId: string }) {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { screenToFlowPosition, updateNodeData, getNodes, getEdges } = useReactFlow();
+  const { data: pipes } = useQuery({
+    queryKey: ["pipelines", props.projectId],
+    queryFn: () => api<PipelineRun[]>(`/api/pipelines?projectId=${props.projectId}`),
+  });
+  const waiting = pipes?.find((p) => p.status === "waiting") ?? null;
   const [canvasMeta, setCanvasMeta] = useState<CanvasMeta | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
   const [edges, setEdges] = useState<Edge[]>([]);
@@ -136,7 +155,7 @@ function CanvasInner(props: { projectId: string }) {
   // ---------------------------------------------------------------------------
 
   const addNode = useCallback(
-    (type: "textNode" | "assetNode" | "imageGenNode") => {
+    (type: "textNode" | "assetNode" | "imageGenNode" | "videoGenNode" | "ttsNode" | "ffmpegNode") => {
       const position = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 - 100 });
       const id = newNodeId();
       const dataByType = {
@@ -148,6 +167,9 @@ function CanvasInner(props: { projectId: string }) {
           endpointId: null,
           status: "idle",
         } satisfies ImageGenNodeData,
+        videoGenNode: { prompt: "", durationSec: 5, endpointId: null, status: "idle" } satisfies VideoGenNodeData,
+        ttsNode: { text: "", endpointId: null, status: "idle" } satisfies TtsNodeData,
+        ffmpegNode: { op: "extract", atMs: 1000, status: "idle" } satisfies FfmpegNodeData,
       };
       setNodes((ns) => {
         const next = [...ns, { id, type, position, data: dataByType[type] }];
@@ -173,7 +195,7 @@ function CanvasInner(props: { projectId: string }) {
       const walk = (id: string) => {
         for (const e of allEdges.filter((e) => e.target === id)) {
           const src = allNodes.find((n) => n.id === e.source);
-          if (src?.type === "imageGenNode" && !upstreamGen.includes(src.id)) {
+          if (src && GEN_TYPES.has(src.type ?? "") && !upstreamGen.includes(src.id)) {
             walk(src.id);
             upstreamGen.push(src.id);
           }
@@ -183,7 +205,7 @@ function CanvasInner(props: { projectId: string }) {
 
       const queue = [...upstreamGen, nodeId].filter((id) => {
         const n = allNodes.find((n) => n.id === id);
-        return n?.type === "imageGenNode";
+        return n && GEN_TYPES.has(n.type ?? "");
       });
 
       setRunningIds((s) => new Set([...s, ...queue]));
@@ -200,24 +222,67 @@ function CanvasInner(props: { projectId: string }) {
             .filter((n): n is Node<TextNodeData> => n?.type === "textNode")
             .map((n) => n.data.text.trim())
             .filter(Boolean);
-          const ownPrompt = ((node.data as ImageGenNodeData).prompt ?? "").trim();
+          const ownPrompt =
+            node.type === "ttsNode"
+              ? ((node.data as TtsNodeData).text ?? "").trim()
+              : node.type === "videoGenNode"
+                ? ((node.data as VideoGenNodeData).prompt ?? "").trim()
+                : ((node.data as ImageGenNodeData).prompt ?? "").trim();
           const prompt = textInputs.length > 0 ? textInputs.join("\n\n") : ownPrompt;
 
-          if (!prompt) {
+          if (node.type !== "ffmpegNode" && !prompt) {
             updateNodeData(id, { status: "failed", error: "缺少提示词：请填写或连入文本节点" });
             throw new Error(`节点 ${id} 缺少提示词`);
           }
 
-          const data = node.data as ImageGenNodeData;
           updateNodeData(id, { status: "running", error: undefined });
           try {
-            const job = await submitImageGen({
-              prompt,
-              size: data.size,
-              endpointId: data.endpointId,
-              projectId: props.projectId,
-            });
-            const done = await waitForJob(job.id);
+            const incomingAsset = currentEdges
+              .filter((e) => e.target === id)
+              .map((e) => getNodes().find((n) => n.id === e.source))
+              .map((n) => {
+                if (!n) return "";
+                if (n.type === "assetNode") return (n.data as AssetNodeData).assetId ?? "";
+                const gen = n.data as { assetId?: string };
+                return gen.assetId ?? "";
+              })
+              .find(Boolean);
+
+            let job;
+            if (node.type === "videoGenNode") {
+              const data = node.data as VideoGenNodeData;
+              job = await submitVideoGen({
+                prompt,
+                durationSec: data.durationSec,
+                endpointId: data.endpointId,
+                projectId: props.projectId,
+              });
+            } else if (node.type === "ttsNode") {
+              const data = node.data as TtsNodeData;
+              job = await submitTts({
+                text: prompt || data.text,
+                endpointId: data.endpointId,
+                projectId: props.projectId,
+              });
+            } else if (node.type === "ffmpegNode") {
+              const data = node.data as FfmpegNodeData;
+              if (!incomingAsset) throw new Error("左边先连一段素材");
+              job = await submitFfmpeg({
+                op: data.op,
+                assetId: incomingAsset,
+                atMs: data.atMs,
+                projectId: props.projectId,
+              });
+            } else {
+              const data = node.data as ImageGenNodeData;
+              job = await submitImageGen({
+                prompt,
+                size: data.size,
+                endpointId: data.endpointId,
+                projectId: props.projectId,
+              });
+            }
+            const done = await waitForJob(job.id, node.type === "videoGenNode" ? 12 * 60_000 : 10 * 60_000);
             const result = JSON.parse(done.resultJson ?? "{}") as { assetId?: string };
             updateNodeData(id, { status: "done", assetId: result.assetId });
           } catch (e) {
@@ -258,7 +323,7 @@ function CanvasInner(props: { projectId: string }) {
     if (!useAppStore.getState().pendingAutoRun) return;
     autoRunFired.current = true;
     useAppStore.getState().setPendingAutoRun(false);
-    const genIds = nodes.filter((n) => n.type === "imageGenNode").map((n) => n.id);
+    const genIds = nodes.filter((n) => n.type === "imageGenNode" || n.type === "videoGenNode" || n.type === "ttsNode").map((n) => n.id);
     void (async () => {
       for (const id of genIds) {
         try {
@@ -278,11 +343,48 @@ function CanvasInner(props: { projectId: string }) {
   return (
     <CanvasActionsContext.Provider value={actions}>
       <div className="relative h-full">
+        {waiting && (
+          <div className="absolute top-14 left-3 z-10 max-w-lg rounded-xl border border-accent-dim bg-panel/95 p-3 text-xs shadow-xl">
+            <div className="mb-1 font-medium text-accent">剧本已拆好，先看一眼再搭画布</div>
+            <p className="mb-2 text-fg-dim">
+              {waiting.bible?.title ?? "短剧"} · {waiting.bible?.episodes.length ?? 0} 集
+            </p>
+            <ul className="mb-2 max-h-24 overflow-auto text-fg-faint">
+              {waiting.bible?.episodes.map((ep) => (
+                <li key={ep.index}>第 {ep.index} 集 {ep.title}</li>
+              ))}
+            </ul>
+            <div className="flex gap-2">
+              <button
+                className="rounded-lg bg-accent px-3 py-1 text-black"
+                onClick={async () => {
+                  await apiJson(`/api/pipelines/${waiting.id}/advance`, "post");
+                  qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
+                  window.location.reload();
+                }}
+              >
+                确认，搭画布
+              </button>
+              <button
+                className="rounded-lg border border-line px-3 py-1 text-fg-dim"
+                onClick={async () => {
+                  await apiJson(`/api/pipelines/${waiting.id}/retry-step`, "post");
+                  qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
+                }}
+              >
+                重拆
+              </button>
+            </div>
+          </div>
+        )}
         {/* 工具栏 */}
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-xl border border-line bg-panel/90 p-1.5 backdrop-blur">
           <ToolbarButton label="文本" onClick={() => addNode("textNode")} />
           <ToolbarButton label="资产" onClick={() => addNode("assetNode")} />
           <ToolbarButton label="文生图" onClick={() => addNode("imageGenNode")} />
+          <ToolbarButton label="文生视频" onClick={() => addNode("videoGenNode")} />
+          <ToolbarButton label="配音" onClick={() => addNode("ttsNode")} />
+          <ToolbarButton label="ffmpeg" onClick={() => addNode("ffmpegNode")} />
           <div className="mx-1 h-4 w-px bg-line" />
           <span className="px-1 text-[10px] text-fg-faint">
             {saveState === "saved" ? "已保存" : saveState === "saving" ? "保存中…" : "待保存"}

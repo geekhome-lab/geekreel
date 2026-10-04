@@ -68,3 +68,38 @@ genRoutes.post("/tts", async (c) => {
   );
   return ok(c, job);
 });
+
+genRoutes.post("/video", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    prompt?: string;
+    durationSec?: number;
+    endpointId?: string;
+    projectId?: string;
+  };
+  if (!body.prompt?.trim()) return err(c, "缺少提示词");
+  if (!listEndpoints("video").some((e) => e.enabled)) {
+    return err(c, "还没有视频模型。到「模型」页加可灵、豆包或 OpenAI 兼容的视频端点。", 422);
+  }
+  const job = jobQueue.submit(
+    "gen.video",
+    { prompt: body.prompt.trim(), durationSec: body.durationSec, endpointId: body.endpointId },
+    body.projectId ?? null,
+  );
+  return ok(c, job);
+});
+
+genRoutes.post("/ffmpeg", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    op?: "extract" | "transcode";
+    assetId?: string;
+    atMs?: number;
+    projectId?: string;
+  };
+  if (!body.assetId) return err(c, "先选一段素材");
+  const job = jobQueue.submit(
+    "media.transcode",
+    { op: body.op ?? "transcode", assetId: body.assetId, atMs: body.atMs },
+    body.projectId ?? null,
+  );
+  return ok(c, job);
+});

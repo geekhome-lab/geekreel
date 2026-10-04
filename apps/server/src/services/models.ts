@@ -26,6 +26,11 @@ function rowToEndpoint(row: EndpointRow, withKey = false): ModelEndpoint {
     config.apiKey = withKey ? plain : maskSecret(plain);
     if (!withKey) delete config.apiKeyEnc;
   }
+  if (config.secretKeyEnc) {
+    const plain = decrypt(config.secretKeyEnc);
+    config.secretKey = withKey ? plain : maskSecret(plain);
+    if (!withKey) delete config.secretKeyEnc;
+  }
   return {
     id: row.id,
     name: row.name,
@@ -66,6 +71,10 @@ export function createEndpoint(input: {
     config.apiKeyEnc = encrypt(config.apiKey);
     delete config.apiKey;
   }
+  if (config.secretKey) {
+    config.secretKeyEnc = encrypt(config.secretKey);
+    delete config.secretKey;
+  }
   db.run(
     `INSERT INTO model_endpoints (id, name, adapterType, capability, configJson, webSearch, createdAt)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -98,6 +107,17 @@ export function updateEndpoint(
   } else if (existing.config.apiKey) {
     config.apiKeyEnc = encrypt(existing.config.apiKey);
     delete config.apiKey;
+  }
+  if (patch.config && "secretKey" in patch.config) {
+    if (patch.config.secretKey) {
+      config.secretKeyEnc = encrypt(patch.config.secretKey);
+      delete config.secretKey;
+    } else {
+      delete config.secretKey;
+    }
+  } else if (existing.config.secretKey) {
+    config.secretKeyEnc = encrypt(existing.config.secretKey);
+    delete config.secretKey;
   }
 
   db.run(

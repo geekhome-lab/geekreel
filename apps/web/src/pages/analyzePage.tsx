@@ -240,6 +240,7 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
   const setPendingAutoRun = useAppStore((s) => s.setPendingAutoRun);
   const vars = props.report.report.template.variables;
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(vars.map((v) => [v, ""])));
+  const [variantCount, setVariantCount] = useState(1);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -248,7 +249,12 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
     setBusy(true);
     try {
       const tpl = await apiJson<RemakeTemplate>("/api/remake/from-report", "post", { reportId: props.report.id });
-      const job = await apiJson<Job>("/api/remake/run", "post", { templateId: tpl.id, reportId: props.report.id, variables: values });
+      const job = await apiJson<Job>("/api/remake/run", "post", {
+        templateId: tpl.id,
+        reportId: props.report.id,
+        variables: values,
+        variantCount,
+      });
       const done = await waitForJob(job.id, 5 * 60_000);
       const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
       if (!result.projectId) throw new Error("没有建出项目");
@@ -263,7 +269,7 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
 
   return (
     <Modal title="换成我的主题" onClose={props.onClose} width="w-[440px]">
-      <p className="mb-3 text-xs text-fg-faint">骨架沿用「{props.report.report.template.name}」，只换你的内容。出图后可送到时间线导出。</p>
+      <p className="mb-3 text-xs text-fg-faint">骨架沿用「{props.report.report.template.name}」，只换你的内容。可一次开多个变体，各自一套画布和时间线。</p>
       <div className="space-y-2">
         {vars.map((v) => (
           <input
@@ -275,6 +281,18 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
           />
         ))}
       </div>
+      <label className="mt-3 flex items-center justify-between text-xs text-fg-dim">
+        变体数量
+        <select
+          className="rounded-lg border border-line bg-panel-2 px-2 py-1"
+          value={variantCount}
+          onChange={(e) => setVariantCount(Number(e.target.value))}
+        >
+          {[1, 2, 3, 4, 5].map((n) => (
+            <option key={n} value={n}>{n} 个</option>
+          ))}
+        </select>
+      </label>
       {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
       <div className="mt-4 flex justify-end gap-2">
         <button className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim" onClick={props.onClose}>取消</button>

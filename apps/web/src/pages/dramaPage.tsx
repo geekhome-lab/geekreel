@@ -105,10 +105,10 @@ export function DramaPage() {
         kind: "drama",
       });
       const done = await waitForJob(job.id, 8 * 60_000);
-      const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
+      const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string; waiting?: boolean };
       if (!result.projectId) throw new Error("没有建出项目");
       setCurrentProject(result.projectId);
-      setPendingAutoRun(true);
+      setPendingAutoRun(!result.waiting);
       navigate("/canvas");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

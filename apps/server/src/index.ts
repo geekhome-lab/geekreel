@@ -1,9 +1,10 @@
+import "@vw/models/register";
 import { detectBins } from "@vw/media";
 import { createApp, websocket } from "./app";
 import { host, port } from "./config";
 import { jobQueue } from "./jobs/queue";
 import { indexAssetHandler } from "./services/indexer";
-import { genImageHandler, genTtsHandler, timelineTtsHandler } from "./services/generate";
+import { genImageHandler, genTtsHandler, genVideoHandler, mediaTranscodeHandler, timelineTtsHandler } from "./services/generate";
 import { migrateLibraryHandler } from "./services/migrate";
 import { renderTimelineHandler } from "./services/render";
 import { fetchRadarHandler, digestRadarHandler, seedRadarSources } from "./services/radar";
@@ -19,7 +20,9 @@ import { detectYtdlp } from "@vw/analyze";
 // 注册任务处理器
 jobQueue.register("asset.index", indexAssetHandler, 2);
 jobQueue.register("gen.image", genImageHandler, 4);
+jobQueue.register("gen.video", genVideoHandler, 2);
 jobQueue.register("gen.tts", genTtsHandler, 2);
+jobQueue.register("media.transcode", mediaTranscodeHandler, 2);
 jobQueue.register("timeline.tts", timelineTtsHandler, 1);
 jobQueue.register("asset.migrate", migrateLibraryHandler, 1);
 jobQueue.register("timeline.render", renderTimelineHandler, 2);

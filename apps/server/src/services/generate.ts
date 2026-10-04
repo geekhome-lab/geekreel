@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { clipDuration, type TimelineDoc } from "@vw/core";
 import { getAdapter } from "@vw/models";
-import { detectBins, probe } from "@vw/media";
+import { detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { resolveEndpoint } from "./models";
@@ -177,4 +177,98 @@ export const timelineTtsHandler: JobHandler = async (job, ctx) => {
   writeFileSync(abs, JSON.stringify(doc, null, 2));
   ctx.progress(1, `已配 ${done} 段`);
   return { clipCount: done, projectId: payload.projectId };
+};
+
+export const genVideoHandler: JobHandler = async (job, ctx) => {
+  const payload = JSON.parse(job.payloadJson) as {
+    prompt: string;
+    durationSec?: number;
+    endpointId?: string;
+    projectId?: string;
+  };
+  if (!payload.prompt?.trim()) throw new Error("缺少提示词");
+  ctx.progress(0.05, "找视频模型");
+  const endpoint = resolveEndpoint("video", payload.endpointId);
+  if (!endpoint) throw new Error("还没有视频模型。到「模型」页加可灵、豆包或 OpenAI 兼容的视频端点。");
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.generateVideo) throw new Error("这个模型不会出视频，换一个视频模型");
+
+  ctx.progress(0.15, `正在生成 ${endpoint.name}，可能要一两分钟`);
+  const result = await adapter.generateVideo(endpoint.config, {
+    prompt: payload.prompt,
+    durationSec: payload.durationSec || 5,
+    signal: ctx.signal,
+  });
+  const ext = result.mime.includes("webm") ? "webm" : "mp4";
+  const asset = storeAsset({
+    type: "video",
+    title: payload.prompt.replace(/\s+/g, " ").slice(0, 24) || "生成视频",
+    ext,
+    source: "canvas",
+    projectId: payload.projectId ?? job.projectId,
+    data: result.data,
+  });
+  recordUsage({
+    endpoint,
+    projectId: payload.projectId ?? job.projectId,
+    jobType: "gen.video",
+    videoSec: result.durationSec ?? payload.durationSec ?? 5,
+  });
+  ctx.progress(1, "视频已入库");
+  return { assetId: asset.id, endpointId: endpoint.id };
+};
+
+export const mediaTranscodeHandler: JobHandler = async (job, ctx) => {
+  const payload = JSON.parse(job.payloadJson) as {
+    op?: "extract" | "transcode";
+    assetId?: string;
+    atMs?: number;
+    projectId?: string;
+  };
+  if (!payload.assetId) throw new Error("先选一段素材");
+  const src = db.query("SELECT * FROM assets WHERE id = ?").get(payload.assetId) as { id: string; path: string; title: string; type: string } | null;
+  if (!src) throw new Error("素材不存在");
+  const bins = await detectBins();
+  if (!bins.ffmpeg) throw new Error("项目自带的 ffmpeg 找不到。把整个项目拷走再试。");
+
+  const { mkdtempSync, readFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const tmp = mkdtempSync(join(tmpdir(), "vw-ff-"));
+  try {
+    const input = absInLibrary(src.path);
+    if (payload.op === "extract") {
+      ctx.progress(0.2, "抽一帧");
+      const out = join(tmp, "frame.jpg");
+      await videoThumbnail(bins.ffmpeg, input, out, payload.atMs ?? 1000, ctx.signal);
+      const asset = storeAsset({
+        type: "image",
+        title: `${src.title}-抽帧`,
+        ext: "jpg",
+        source: "canvas",
+        projectId: payload.projectId ?? job.projectId,
+        data: readFileSync(out),
+      });
+      ctx.progress(1, "抽帧完成");
+      return { assetId: asset.id };
+    }
+    ctx.progress(0.2, "转码");
+    const out = join(tmp, "out.mp4");
+    await transcodeMp4(bins.ffmpeg, input, out, { signal: ctx.signal });
+    const asset = storeAsset({
+      type: "video",
+      title: `${src.title}-转码`,
+      ext: "mp4",
+      source: "canvas",
+      projectId: payload.projectId ?? job.projectId,
+      data: readFileSync(out),
+    });
+    ctx.progress(1, "转码完成");
+    return { assetId: asset.id };
+  } finally {
+    try {
+      rmSync(tmp, { recursive: true, force: true });
+    } catch {
+      /* 临时目录清不掉不影响产物 */
+    }
+  }
 };

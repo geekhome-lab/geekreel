@@ -4,6 +4,8 @@
  * 新厂商接入 = 新增一个适配器文件并在 registry 注册。
  */
 
+import { openaiGenerateVideo } from "./openaiVideo";
+
 export type Capability = "llm" | "image" | "video" | "tts";
 
 export const capabilityLabels: Record<Capability, string> = {
@@ -64,6 +66,12 @@ export interface SpeechResult {
   mime: string;
 }
 
+export interface VideoGenResult {
+  data: Uint8Array;
+  mime: string;
+  durationSec?: number;
+}
+
 export interface ModelAdapter {
   type: string;
   label: string;
@@ -82,6 +90,10 @@ export interface ModelAdapter {
     config: Record<string, string>,
     req: { text: string; voice?: string; signal?: AbortSignal },
   ): Promise<SpeechResult>;
+  generateVideo?(
+    config: Record<string, string>,
+    req: { prompt: string; durationSec?: number; signal?: AbortSignal },
+  ): Promise<VideoGenResult>;
   transcribe?(
     config: Record<string, string>,
     req: { data: Uint8Array; filename: string; mime?: string; signal?: AbortSignal },
@@ -157,7 +169,7 @@ async function readError(res: Response): Promise<string> {
 export const openaiCompatible: ModelAdapter = {
   type: "openai-compatible",
   label: "OpenAI 兼容接口",
-  capabilities: ["llm", "image", "tts"],
+  capabilities: ["llm", "image", "tts", "video"],
   configFields: [
     { key: "baseUrl", label: "Base URL", type: "text", required: true, placeholder: "https://api.deepseek.com/v1" },
     { key: "apiKey", label: "API Key", type: "password", required: true, placeholder: "sk-…" },
@@ -277,6 +289,10 @@ export const openaiCompatible: ModelAdapter = {
     const json = (await res.json()) as { text?: string };
     return (json.text ?? "").trim();
   },
+
+  generateVideo(config, req) {
+    return openaiGenerateVideo(config, req);
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -284,6 +300,10 @@ export const openaiCompatible: ModelAdapter = {
 // ---------------------------------------------------------------------------
 
 const registry = new Map<string, ModelAdapter>([[openaiCompatible.type, openaiCompatible]]);
+
+export function registerAdapter(adapter: ModelAdapter) {
+  registry.set(adapter.type, adapter);
+}
 
 export function listAdapters(): ModelAdapter[] {
   return [...registry.values()];

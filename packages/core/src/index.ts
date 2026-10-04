@@ -24,6 +24,17 @@ export const assetTypeLabels: Record<AssetType, string> = {
   text: "文本",
 };
 
+export type AssetKind = "generic" | "character" | "scene" | "prop";
+
+export const assetKinds: AssetKind[] = ["generic", "character", "scene", "prop"];
+
+export const assetKindLabels: Record<AssetKind, string> = {
+  generic: "通用",
+  character: "角色",
+  scene: "场景",
+  prop: "道具",
+};
+
 export type AssetSource = "import" | "canvas" | "pipeline" | "remake" | "analyze" | "tts";
 
 export const assetSourceLabels: Record<AssetSource, string> = {
@@ -53,6 +64,9 @@ export interface Asset {
   thumbPath: string | null;
   proxyPath: string | null;
   metaJson: string;
+  favorite: boolean;
+  kind: AssetKind;
+  tags: string[];
   createdAt: number;
 }
 

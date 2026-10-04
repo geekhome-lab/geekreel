@@ -222,6 +222,16 @@ ensureColumn("projects", "stylePackId", "stylePackId TEXT");
 ensureColumn("projects", "paletteJson", "paletteJson TEXT");
 ensureColumn("projects", "seriesId", "seriesId TEXT");
 ensureColumn("projects", "episodeIndex", "episodeIndex INTEGER");
+ensureColumn("assets", "favorite", "favorite INTEGER NOT NULL DEFAULT 0");
+ensureColumn("assets", "kind", "kind TEXT NOT NULL DEFAULT 'generic'");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS asset_tags (
+  assetId TEXT NOT NULL,
+  tag TEXT NOT NULL,
+  PRIMARY KEY (assetId, tag)
+)`);
+db.run("CREATE INDEX IF NOT EXISTS idx_asset_tags_tag ON asset_tags(tag)");
 
 db.run(`
 CREATE TABLE IF NOT EXISTS series (

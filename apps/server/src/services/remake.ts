@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sanitizeTitle, type RemakeRun, type RemakeTemplate, type RemakeTemplateDoc } from "@vw/core";
+import { emptyTimelineDoc, sanitizeTitle, type RemakeRun, type RemakeTemplate, type RemakeTemplateDoc } from "@vw/core";
 import { getAdapter } from "@vw/models";
-import { parseRemakeShots, remakePrompt, REMAKE_SYSTEM } from "@vw/remake";
+import { assembleSubtitleClips, parseRemakeShots, remakePrompt, REMAKE_SYSTEM } from "@vw/remake";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
@@ -53,7 +53,25 @@ export function templateFromReport(reportId: string): RemakeTemplate {
   return getTemplate(id)!;
 }
 
-function createProjectWithShots(name: string, shots: Array<{ imagePrompt: string }>): { projectId: string; name: string } {
+function writeRemakeTimeline(dir: string, shots: Array<{ line: string; imagePrompt: string; maxSec: number; slotId?: string }>) {
+  const clips = assembleSubtitleClips(shots);
+  const doc = emptyTimelineDoc();
+  const sTrack = doc.tracks.find((t) => t.type === "subtitle")!;
+  clips.forEach((c, i) => {
+    sTrack.clips.push({
+      id: `c_s_${i}`,
+      text: c.text,
+      startMs: c.startMs,
+      inMs: 0,
+      outMs: c.durationMs,
+      volume: 1,
+    });
+  });
+  mkdirSync(join(dir, "timeline"), { recursive: true });
+  writeFileSync(join(dir, "timeline", "main.json"), JSON.stringify(doc, null, 2));
+}
+
+function createProjectWithShots(name: string, shots: Array<{ imagePrompt: string; line: string; maxSec: number }>): { projectId: string; name: string } {
   const id = newId();
   const d = new Date();
   const mmdd = `${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
@@ -86,6 +104,7 @@ function createProjectWithShots(name: string, shots: Array<{ imagePrompt: string
   db.run("INSERT INTO canvas_docs (id, projectId, name, path, updatedAt) VALUES (?, ?, ?, ?, ?)", [
     canvasId, id, "主画布", "canvas/主画布.json", t,
   ]);
+  writeRemakeTimeline(dir, shots);
   return { projectId: id, name };
 }
 
@@ -95,6 +114,7 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
     reportId?: string;
     variables?: Record<string, string>;
     endpointId?: string;
+    variantCount?: number;
   };
   ctx.progress(0.1, "读取模板");
   const tpl = payload.templateId
@@ -113,27 +133,42 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
-  const text = await chatMetered(
-    adapter,
-    endpoint,
-    {
-      system: REMAKE_SYSTEM,
-      prompt: remakePrompt(tpl.doc, variables),
-    },
-    { jobType: "remake.run" },
-  );
-  const shots = parseRemakeShots(text, tpl.doc);
-  if (shots.length === 0) throw new Error("没有生成分镜");
+  const variantCount = Math.min(6, Math.max(1, Math.round(payload.variantCount ?? 1)));
+  const projects: Array<{ projectId: string; name: string; shotCount: number; runId: string }> = [];
 
-  ctx.progress(0.75, "搭画布");
-  const project = createProjectWithShots(sanitizeTitle(theme, 16) || "复刻", shots);
-  const runId = newId();
-  db.run(
-    "INSERT INTO remake_runs (id, templateId, projectId, variablesJson, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
-    [runId, tpl.id, project.projectId, JSON.stringify(variables), "done", now()],
-  );
-  ctx.progress(1, "项目已建好");
-  return { runId, projectId: project.projectId, name: project.name, shotCount: shots.length };
+  for (let i = 0; i < variantCount; i++) {
+    ctx.progress(0.25 + (i / variantCount) * 0.7, variantCount > 1 ? `改写变体 ${i + 1}/${variantCount}` : "按你的主题改写分镜");
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: REMAKE_SYSTEM,
+        prompt: remakePrompt(tpl.doc, variables, { variantIndex: i + 1, variantCount }),
+      },
+      { jobType: "remake.run" },
+    );
+    const shots = parseRemakeShots(text, tpl.doc);
+    if (shots.length === 0) throw new Error("没有生成分镜");
+    const suffix = variantCount > 1 ? `变体${i + 1}` : "";
+    const project = createProjectWithShots(sanitizeTitle(`${theme}${suffix}`, 16) || "复刻", shots);
+    const runId = newId();
+    db.run(
+      "INSERT INTO remake_runs (id, templateId, projectId, variablesJson, status, createdAt) VALUES (?, ?, ?, ?, ?, ?)",
+      [runId, tpl.id, project.projectId, JSON.stringify({ ...variables, variant: i + 1 }), "done", now()],
+    );
+    projects.push({ projectId: project.projectId, name: project.name, shotCount: shots.length, runId });
+  }
+
+  const first = projects[0]!;
+  ctx.progress(1, variantCount > 1 ? `已开 ${variantCount} 个变体` : "项目已建好");
+  return {
+    runId: first.runId,
+    projectId: first.projectId,
+    projectIds: projects.map((p) => p.projectId),
+    name: first.name,
+    shotCount: first.shotCount,
+    variantCount,
+  };
 };
 
 export function listRuns(): RemakeRun[] {

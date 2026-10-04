@@ -258,6 +258,28 @@ export async function hasSubtitlesFilter(bin: string): Promise<boolean> {
   }
 }
 
+/** 任意素材转成可预览的 mp4（画布 ffmpeg 节点用） */
+export async function transcodeMp4(
+  bin: string,
+  input: string,
+  output: string,
+  opts?: { signal?: AbortSignal; durationMs?: number },
+) {
+  await runFfmpeg({
+    bin,
+    args: [
+      "-i", input,
+      "-vf", "scale=-2:'min(720,ih)'",
+      "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+      "-c:a", "aac", "-b:a", "128k",
+      "-movflags", "+faststart",
+      output,
+    ],
+    durationMs: opts?.durationMs,
+    signal: opts?.signal,
+  });
+}
+
 /** 视频代理（720p h264 + aac，faststart），进度 0-1 */
 export async function videoProxy(
   bin: string,

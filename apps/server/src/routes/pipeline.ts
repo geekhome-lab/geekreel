@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
-import { getPipeline, listPipelines } from "../services/pipeline";
+import { advancePipeline, getPipeline, listPipelines, retryPipelineBible } from "../services/pipeline";
 import { loadPack } from "../services/styles";
 import { listEndpoints } from "../services/models";
 
@@ -27,6 +27,7 @@ pipelineRoutes.post("/run", async (c) => {
     seriesId?: string;
     seriesName?: string;
     kind?: "drama" | "free" | "whiteboard";
+    checkpoint?: boolean;
   };
   if (!body.story?.trim() && !body.url?.trim()) return err(c, "先上传小说、贴一段正文，或给一个能打开的链接");
   if (body.packId) {
@@ -44,4 +45,20 @@ pipelineRoutes.post("/run", async (c) => {
   }
   const job = jobQueue.submit("pipeline.run", body, body.projectId ?? null);
   return ok(c, job);
+});
+
+pipelineRoutes.post("/:id/advance", (c) => {
+  try {
+    return ok(c, advancePipeline(c.req.param("id")));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
+});
+
+pipelineRoutes.post("/:id/retry-step", (c) => {
+  try {
+    return ok(c, retryPipelineBible(c.req.param("id")));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
 });

@@ -26,7 +26,7 @@ import {
 } from "@vw/pipeline";
 import { paletteLine } from "@vw/style";
 import { db } from "../db";
-import type { JobContext, JobHandler } from "../jobs/queue";
+import { jobQueue, type JobContext, type JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
 import { libraryRoot, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
@@ -156,6 +156,7 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
     seriesId?: string;
     seriesName?: string;
     kind?: "drama" | "free" | "whiteboard";
+    checkpoint?: boolean;
   };
   let story = payload.story?.trim() ?? "";
   if (!story && payload.url?.trim()) {
@@ -327,19 +328,78 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
     projectId,
   ]);
 
-  ctx.progress(0.8, "搭画布");
-  writeCanvas(projectId, directory, bible, payload.imageEndpointId ?? null);
+  const input = {
+    story,
+    packId: pack?.public.id ?? null,
+    substyle,
+    seriesId: existingSeries?.id ?? null,
+    seriesName: payload.seriesName ?? null,
+    kind: payload.kind ?? "drama",
+    imageEndpointId: payload.imageEndpointId ?? null,
+    llmEndpointId: payload.llmEndpointId ?? null,
+  };
 
-  let seriesId = existingSeries?.id ?? null;
+  if (payload.checkpoint !== false && !isWhiteboard) {
+    db.run("UPDATE pipelines SET status = ?, currentStep = ?, stateJson = ?, updatedAt = ? WHERE id = ?", [
+      "waiting",
+      "bible",
+      JSON.stringify({ bible, story, input }),
+      now(),
+      runId,
+    ]);
+    ctx.progress(1, "剧本已拆好，确认后再搭画布");
+    return {
+      pipelineId: runId,
+      projectId,
+      waiting: true,
+      title: bible.title,
+      episodeCount: bible.episodes.length,
+      shotCount: bible.episodes.reduce((n, e) => n + e.shots.length, 0),
+    };
+  }
+
+  return finishDramaCanvas({
+    runId,
+    projectId,
+    directory,
+    bible,
+    story,
+    input,
+    continuing,
+    existingSeriesId: existingSeries?.id ?? null,
+  });
+};
+
+function finishDramaCanvas(opts: {
+  runId: string;
+  projectId: string;
+  directory: string;
+  bible: DramaBible;
+  story: string;
+  input: {
+    packId: string | null;
+    substyle: string | null;
+    seriesId: string | null;
+    seriesName: string | null;
+    kind: string;
+    imageEndpointId: string | null;
+  };
+  continuing: boolean;
+  existingSeriesId: string | null;
+}) {
+  const { runId, projectId, directory, bible, story, input, continuing, existingSeriesId } = opts;
+  writeCanvas(projectId, directory, bible, input.imageEndpointId);
+
+  let seriesId = existingSeriesId;
   let episodeIndex: number | null = null;
   if (seriesId) {
     episodeIndex = attachEpisode(seriesId, projectId, bible, JSON.stringify(bible.palette));
-  } else if (payload.seriesName?.trim()) {
+  } else if (input.seriesName?.trim()) {
     const created = createSeries({
-      name: payload.seriesName.trim(),
-      kind: payload.kind === "whiteboard" ? "whiteboard" : "drama",
-      stylePackId: pack?.public.id ?? null,
-      substyle,
+      name: input.seriesName.trim(),
+      kind: input.kind === "whiteboard" ? "whiteboard" : "drama",
+      stylePackId: input.packId,
+      substyle: input.substyle,
     });
     seriesId = created.id;
     episodeIndex = attachEpisode(seriesId, projectId, bible, JSON.stringify(bible.palette));
@@ -349,21 +409,85 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   db.run("UPDATE pipelines SET status = ?, currentStep = ?, stateJson = ?, updatedAt = ? WHERE id = ?", [
     "done",
     "canvas",
-    JSON.stringify({ bible, story, seriesId, episodeIndex }),
+    JSON.stringify({ bible, story, seriesId, episodeIndex, input }),
     t1,
     runId,
   ]);
-  ctx.progress(1, continuing ? `第 ${episodeIndex} 集已搭好` : "5 集初稿已搭好");
   return {
     pipelineId: runId,
     projectId,
     seriesId,
     episodeIndex,
+    waiting: false,
     title: bible.title,
     episodeCount: bible.episodes.length,
     shotCount: bible.episodes.reduce((n, e) => n + e.shots.length, 0),
+    message: continuing ? `第 ${episodeIndex} 集已搭好` : "5 集初稿已搭好",
   };
-};
+}
+
+export function advancePipeline(id: string): ReturnType<typeof finishDramaCanvas> {
+  const row = db.query("SELECT * FROM pipelines WHERE id = ?").get(id) as PipeRow | null;
+  if (!row) throw new Error("流水线不存在");
+  if (row.status !== "waiting") throw new Error("这一步不用确认，已经做完了");
+  const project = db.query("SELECT directory FROM projects WHERE id = ?").get(row.projectId) as { directory: string } | null;
+  if (!project) throw new Error("项目不存在");
+  let state: { bible?: DramaBible; story?: string; input?: Parameters<typeof finishDramaCanvas>[0]["input"] };
+  try {
+    state = JSON.parse(row.stateJson) as typeof state;
+  } catch {
+    throw new Error("流水线状态坏了，请重拆一集");
+  }
+  if (!state.bible) throw new Error("还没有剧本");
+  return finishDramaCanvas({
+    runId: id,
+    projectId: row.projectId,
+    directory: project.directory,
+    bible: state.bible,
+    story: state.story ?? "",
+    input: state.input ?? {
+      packId: row.packId,
+      substyle: state.bible.substyle,
+      seriesId: null,
+      seriesName: null,
+      kind: "drama",
+      imageEndpointId: null,
+    },
+    continuing: false,
+    existingSeriesId: state.input?.seriesId ?? null,
+  });
+}
+
+export function retryPipelineBible(id: string) {
+  const row = db.query("SELECT * FROM pipelines WHERE id = ?").get(id) as PipeRow | null;
+  if (!row) throw new Error("流水线不存在");
+  let state: { story?: string; input?: Record<string, unknown> };
+  try {
+    state = JSON.parse(row.stateJson) as typeof state;
+  } catch {
+    state = {};
+  }
+  const story = typeof state.story === "string" ? state.story : "";
+  if (!story) throw new Error("找不到原文，请回到小说页重来");
+  const input = state.input ?? {};
+  db.run("UPDATE pipelines SET status = ?, updatedAt = ? WHERE id = ?", ["canceled", now(), id]);
+  return jobQueue.submit(
+    "pipeline.run",
+    {
+      story,
+      projectId: row.projectId,
+      packId: input.packId ?? row.packId,
+      substyle: input.substyle,
+      seriesId: input.seriesId,
+      seriesName: input.seriesName,
+      kind: input.kind ?? "drama",
+      llmEndpointId: input.llmEndpointId,
+      imageEndpointId: input.imageEndpointId,
+      checkpoint: true,
+    },
+    row.projectId,
+  );
+}
 
 async function runWhiteboard(opts: {
   runId: string;

@@ -1,9 +1,12 @@
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  assetKindLabels,
+  assetKinds,
   assetSourceLabels,
   assetTypeLabels,
   type Asset,
+  type AssetKind,
   type AssetType,
 } from "@vw/core";
 import { api, apiJson } from "../lib/api";
@@ -29,6 +32,8 @@ const tabs: Array<{ key: string; label: string }> = [
 export function AssetsPage() {
   const queryClient = useQueryClient();
   const [type, setType] = useState("");
+  const [kind, setKind] = useState("");
+  const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [q, setQ] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -38,13 +43,15 @@ export function AssetsPage() {
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
+    if (kind) params.set("kind", kind);
+    if (favoriteOnly) params.set("favorite", "1");
     if (q.trim()) params.set("q", q.trim());
     const s = params.toString();
     return s ? `?${s}` : "";
-  }, [type, q]);
+  }, [type, kind, favoriteOnly, q]);
 
   const { data: assets } = useQuery({
-    queryKey: ["assets", type, q],
+    queryKey: ["assets", type, kind, favoriteOnly, q],
     queryFn: () => api<Asset[]>(`/api/assets${queryString}`),
   });
 
@@ -147,9 +154,25 @@ export function AssetsPage() {
             </button>
           ))}
         </div>
+        <select
+          className="rounded-lg border border-line bg-panel px-2 py-1.5 text-xs"
+          value={kind}
+          onChange={(e) => setKind(e.target.value)}
+        >
+          <option value="">全部用途</option>
+          {assetKinds.map((k) => (
+            <option key={k} value={k}>{assetKindLabels[k]}</option>
+          ))}
+        </select>
+        <button
+          className={`rounded-lg border px-3 py-1.5 text-xs ${favoriteOnly ? "border-accent bg-accent/15 text-accent" : "border-line text-fg-dim"}`}
+          onClick={() => setFavoriteOnly((v) => !v)}
+        >
+          只看收藏
+        </button>
         <input
           className="w-64 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs outline-none placeholder:text-fg-faint focus:border-accent-dim"
-          placeholder="搜索标题…"
+          placeholder="搜索标题或标签…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -228,9 +251,13 @@ function AssetCard(props: { asset: Asset; onClick: () => void }) {
         )}
       </div>
       <div className="p-2.5">
-        <div className="truncate text-xs font-medium" title={a.title}>{a.title}</div>
+        <div className="flex items-center gap-1">
+          <div className="truncate text-xs font-medium" title={a.title}>{a.title}</div>
+          {a.favorite && <span className="text-[10px] text-accent">★</span>}
+        </div>
         <div className="mt-1 flex items-center gap-1.5 text-[10px] text-fg-faint">
           <span className="rounded bg-panel-2 px-1 py-0.5">{assetTypeLabels[a.type]}</span>
+          {a.kind && a.kind !== "generic" && <span>{assetKindLabels[a.kind]}</span>}
           {a.durationMs !== null && <span>{formatDuration(a.durationMs)}</span>}
           <span>{formatBytes(a.sizeBytes)}</span>
         </div>
@@ -331,6 +358,7 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
           {asset.width && asset.height && <MetaItem label="分辨率" value={`${asset.width}×${asset.height}`} />}
           <MetaItem label="入库时间" value={formatTime(asset.createdAt)} />
         </div>
+        <AssetMetaEditor asset={asset} />
 
         {/* 操作 */}
         <div className="flex justify-between">
@@ -352,6 +380,62 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
         </div>
       </div>
     </Modal>
+  );
+}
+
+function AssetMetaEditor(props: { asset: Asset }) {
+  const qc = useQueryClient();
+  const [tagDraft, setTagDraft] = useState("");
+  const patch = (body: { favorite?: boolean; kind?: AssetKind; tags?: string[] }) =>
+    apiJson<Asset>(`/api/assets/${props.asset.id}`, "patch", body).then(() => {
+      qc.invalidateQueries({ queryKey: ["assets"] });
+      qc.invalidateQueries({ queryKey: ["asset", props.asset.id] });
+    });
+
+  return (
+    <div className="space-y-2 rounded-lg border border-line bg-panel-2 p-3 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          className={`rounded-lg border px-2.5 py-1 ${props.asset.favorite ? "border-accent text-accent" : "border-line text-fg-dim"}`}
+          onClick={() => void patch({ favorite: !props.asset.favorite })}
+        >
+          {props.asset.favorite ? "已收藏" : "收藏"}
+        </button>
+        <select
+          className="rounded-lg border border-line bg-panel px-2 py-1"
+          value={props.asset.kind ?? "generic"}
+          onChange={(e) => void patch({ kind: e.target.value as AssetKind })}
+        >
+          {assetKinds.map((k) => (
+            <option key={k} value={k}>{assetKindLabels[k]}</option>
+          ))}
+        </select>
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {(props.asset.tags ?? []).map((t) => (
+          <button
+            key={t}
+            className="rounded-full border border-line px-2 py-0.5 text-fg-dim hover:border-red-400"
+            title="点一下去掉"
+            onClick={() => void patch({ tags: (props.asset.tags ?? []).filter((x) => x !== t) })}
+          >
+            {t}
+          </button>
+        ))}
+        <input
+          className="w-28 rounded-lg border border-line bg-panel px-2 py-0.5 outline-none"
+          placeholder="加标签回车"
+          value={tagDraft}
+          onChange={(e) => setTagDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && tagDraft.trim()) {
+              void patch({ tags: [...(props.asset.tags ?? []), tagDraft.trim()] });
+              setTagDraft("");
+            }
+          }}
+        />
+      </div>
+    </div>
   );
 }
 

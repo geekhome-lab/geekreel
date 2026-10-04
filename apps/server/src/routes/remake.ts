@@ -31,6 +31,7 @@ remakeRoutes.post("/run", async (c) => {
     reportId?: string;
     variables?: Record<string, string>;
     endpointId?: string;
+    variantCount?: number;
   };
   if (!body.templateId && !body.reportId) return err(c, "请先选一份报告或模板");
   const vars = body.variables ?? {};

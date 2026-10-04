@@ -74,6 +74,44 @@ export async function submitRender(projectId: string): Promise<Job> {
   });
 }
 
+export async function submitTts(input: {
+  text: string;
+  endpointId?: string | null;
+  projectId?: string | null;
+}): Promise<Job> {
+  return api<Job>("/api/gen/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function submitVideoGen(input: {
+  prompt: string;
+  durationSec?: number;
+  endpointId?: string | null;
+  projectId?: string | null;
+}): Promise<Job> {
+  return api<Job>("/api/gen/video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function submitFfmpeg(input: {
+  op: "extract" | "transcode";
+  assetId: string;
+  atMs?: number;
+  projectId?: string | null;
+}): Promise<Job> {
+  return api<Job>("/api/gen/ffmpeg", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+}
+
 export async function submitTimelineTts(projectId: string): Promise<Job> {
   return api<Job>("/api/timeline/tts", {
     method: "POST",

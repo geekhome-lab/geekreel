@@ -49,6 +49,7 @@ function WsBridge() {
           qc.invalidateQueries({ queryKey: ["styles"] });
           qc.invalidateQueries({ queryKey: ["projects"] });
           qc.invalidateQueries({ queryKey: ["series"] });
+          qc.invalidateQueries({ queryKey: ["pipelines"] });
         }
       }
       if (ev.type === "radar.upsert") qc.invalidateQueries({ queryKey: ["radar-board"] });

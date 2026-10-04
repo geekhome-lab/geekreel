@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { existsSync, statSync } from "node:fs";
 import type { SQLQueryBindings } from "bun:sqlite";
-import { assetTypeFromExt, extFromFileName, mimeFromExt, type AssetType } from "@vw/core";
+import { assetTypeFromExt, extFromFileName, mimeFromExt, type AssetKind, type AssetType } from "@vw/core";
 import { db } from "../db";
 import { err, ok } from "../lib/resp";
 import {
@@ -9,9 +9,10 @@ import {
   assetStats,
   deleteAsset,
   getAsset,
+  hydrateAssets,
   renameAsset,
-  rowToAsset,
   storeAsset,
+  updateAssetMeta,
 } from "../services/library";
 
 export const assetsRoutes = new Hono();
@@ -22,17 +23,23 @@ assetsRoutes.get("/", (c) => {
   const month = c.req.query("month");
   const q = c.req.query("q")?.trim();
   const projectId = c.req.query("projectId");
+  const kind = c.req.query("kind");
+  const favorite = c.req.query("favorite");
+  const tag = c.req.query("tag")?.trim();
 
   const where: string[] = [];
   const params: SQLQueryBindings[] = [];
   if (type) { where.push("type = ?"); params.push(type); }
   if (month) { where.push("path LIKE ?"); params.push(`%/${month}/%`); }
-  if (q) { where.push("title LIKE ?"); params.push(`%${q}%`); }
+  if (q) { where.push("(title LIKE ? OR id IN (SELECT assetId FROM asset_tags WHERE tag LIKE ?))"); params.push(`%${q}%`, `%${q}%`); }
   if (projectId) { where.push("projectId = ?"); params.push(projectId); }
+  if (kind) { where.push("kind = ?"); params.push(kind); }
+  if (favorite === "1") { where.push("favorite = 1"); }
+  if (tag) { where.push("id IN (SELECT assetId FROM asset_tags WHERE tag = ?)"); params.push(tag); }
 
-  const sql = `SELECT * FROM assets ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY createdAt DESC`;
+  const sql = `SELECT * FROM assets ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY favorite DESC, createdAt DESC`;
   const rows = db.query(sql).all(...params) as Record<string, unknown>[];
-  return ok(c, rows.map(rowToAsset));
+  return ok(c, hydrateAssets(rows));
 });
 
 assetsRoutes.get("/stats", (c) => ok(c, assetStats()));
@@ -110,10 +117,20 @@ assetsRoutes.get("/:id", (c) => {
 });
 
 assetsRoutes.patch("/:id", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { title?: string };
-  if (!body.title?.trim()) return err(c, "请填写标题");
+  const body = (await c.req.json().catch(() => ({}))) as {
+    title?: string;
+    favorite?: boolean;
+    kind?: AssetKind;
+    tags?: string[];
+  };
+  if (!body.title && body.favorite === undefined && !body.kind && !body.tags) {
+    return err(c, "没有要改的内容");
+  }
   try {
-    return ok(c, renameAsset(c.req.param("id"), body.title));
+    if (body.title?.trim() && body.favorite === undefined && !body.kind && !body.tags) {
+      return ok(c, renameAsset(c.req.param("id"), body.title));
+    }
+    return ok(c, updateAssetMeta(c.req.param("id"), body));
   } catch (e) {
     return err(c, e instanceof Error ? e.message : String(e), 404);
   }
