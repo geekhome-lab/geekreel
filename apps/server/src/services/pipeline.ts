@@ -13,18 +13,24 @@ import { getAdapter } from "@vw/models";
 import { injectImagePrompt, type LoadedPack } from "@vw/style";
 import {
   bibleFromWhiteboard,
+  clipNovel,
+  fetchNovelText,
+  novelContinuePrompt,
   novelDramaPrompt,
+  NOVEL_CONTINUE_SYSTEM,
   NOVEL_DRAMA_SYSTEM,
   parseDramaBible,
   scenesFromInput,
   stitchEpisodeFrames,
   type WhiteboardScene,
 } from "@vw/pipeline";
+import { paletteLine } from "@vw/style";
 import { db } from "../db";
 import type { JobContext, JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
 import { libraryRoot, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
+import { attachEpisode, createSeries, getSeries, seriesBible } from "./series";
 import { loadPack } from "./styles";
 import { chatMetered } from "./usage";
 
@@ -141,16 +147,32 @@ function writeCanvas(projectId: string, dir: string, bible: DramaBible, imageEnd
 export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   const payload = JSON.parse(job.payloadJson) as {
     story?: string;
+    url?: string;
     packId?: string;
     substyle?: string;
     projectId?: string;
     llmEndpointId?: string;
     imageEndpointId?: string;
+    seriesId?: string;
+    seriesName?: string;
+    kind?: "drama" | "free" | "whiteboard";
   };
-  const story = payload.story?.trim();
-  if (!story) throw new Error("先写一句故事或贴一段小说");
+  let story = payload.story?.trim() ?? "";
+  if (!story && payload.url?.trim()) {
+    ctx.progress(0.04, "打开小说链接");
+    const doc = await fetchNovelText(payload.url.trim(), ctx.signal);
+    story = doc.text;
+  }
+  story = clipNovel(story).text;
+  if (!story) throw new Error("先上传小说、贴一段正文，或给一个能直接打开的链接");
 
-  const pack = payload.packId ? loadPack(payload.packId) : null;
+  const existingSeries = payload.seriesId ? getSeries(payload.seriesId) : null;
+  const lockedBible = existingSeries ? seriesBible(existingSeries) : null;
+  const continuing = !!(lockedBible && (existingSeries?.episodeCount ?? 0) > 0);
+  if (payload.seriesId && !existingSeries) throw new Error("这部连载不存在");
+
+  const packId = payload.packId || existingSeries?.stylePackId || undefined;
+  const pack = packId ? loadPack(packId) : null;
   if (payload.packId && !pack) throw new Error("没找到这套风格。确认 stylePacks/ 里有对应目录。");
   if (pack && !pack.public.ready) throw new Error(pack.public.unavailableReason || "这套风格还不能用");
 
@@ -184,7 +206,7 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   );
 
   if (isWhiteboard && pack && whiteboard) {
-    return runWhiteboard({
+    const result = await runWhiteboard({
       runId,
       projectId,
       directory,
@@ -195,35 +217,78 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
       imageEndpointId: payload.imageEndpointId ?? null,
       ctx,
     });
+    let seriesId = existingSeries?.id ?? null;
+    let episodeIndex: number | null = null;
+    if (seriesId) {
+      episodeIndex = attachEpisode(seriesId, projectId, null, null);
+    } else if (payload.seriesName?.trim()) {
+      const created = createSeries({
+        name: payload.seriesName.trim(),
+        kind: "whiteboard",
+        stylePackId: "whiteboard",
+      });
+      seriesId = created.id;
+      episodeIndex = attachEpisode(seriesId, projectId, null, null);
+    }
+    return { ...result, seriesId, episodeIndex };
   }
 
-  ctx.progress(0.2, "拆 5 集剧本");
+  ctx.progress(0.2, continuing ? "写下一集" : "拆 5 集剧本");
   const endpoint = resolveEndpoint("llm", payload.llmEndpointId);
   if (!endpoint) throw new Error("短剧要文本模型来拆集和色盘。到「模型」页加一个。");
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
+  const substyle = payload.substyle || existingSeries?.substyle || pack?.public.defaultSubstyle || null;
   const packHint = pack
-    ? `风格：${pack.public.name}。子风格：${payload.substyle || pack.public.defaultSubstyle || "默认"}。色盘要能平涂，不要写光影。`
+    ? `风格：${pack.public.name}。子风格：${substyle || "默认"}。色盘要能平涂，不要写光影。`
     : "通用短剧，画面写清楚主体和动作即可。";
   let bible: DramaBible;
   try {
-    const text = await chatMetered(
-      adapter,
-      endpoint,
-      {
-        system: pack?.bibleSystem || NOVEL_DRAMA_SYSTEM,
-        prompt: novelDramaPrompt(story, packHint),
-      },
-      { projectId, jobType: "pipeline.run" },
-    );
-    bible = parseDramaBible(text, story);
+    if (continuing && lockedBible && existingSeries) {
+      const text = await chatMetered(
+        adapter,
+        endpoint,
+        {
+          system: NOVEL_CONTINUE_SYSTEM,
+          prompt: novelContinuePrompt(story, packHint, {
+            title: lockedBible.title || existingSeries.name,
+            episodeIndex: existingSeries.episodeCount + 1,
+            lastFrame: lockedBible.episodes.at(-1)?.lastFrame || "",
+            assetsLine: lockedBible.assets.map((a) => `${a.id}${a.name}`).join("、"),
+            paletteLine: paletteLine(lockedBible.palette),
+          }),
+        },
+        { projectId, jobType: "pipeline.run" },
+      );
+      bible = parseDramaBible(text, story, { episodeCount: 1 });
+      bible.title = lockedBible.title || bible.title;
+      bible.palette = lockedBible.palette.colors.length ? lockedBible.palette : bible.palette;
+      bible.assets = lockedBible.assets.length ? lockedBible.assets : bible.assets;
+      const epNo = existingSeries.episodeCount + 1;
+      bible.episodes = bible.episodes.map((e) => ({ ...e, index: epNo, title: e.title || `第 ${epNo} 集` }));
+    } else {
+      const text = await chatMetered(
+        adapter,
+        endpoint,
+        {
+          system: pack?.bibleSystem || NOVEL_DRAMA_SYSTEM,
+          prompt: novelDramaPrompt(story, packHint),
+        },
+        { projectId, jobType: "pipeline.run" },
+      );
+      bible = parseDramaBible(text, story);
+    }
   } catch {
-    bible = parseDramaBible("", story);
+    bible = parseDramaBible("", story, { episodeCount: continuing ? 1 : 5 });
+    if (continuing && lockedBible) {
+      bible.title = lockedBible.title;
+      bible.palette = lockedBible.palette;
+      bible.assets = lockedBible.assets;
+    }
   }
 
-  const substyle = payload.substyle || pack?.public.defaultSubstyle || null;
-  bible.packId = pack?.public.id ?? null;
+  bible.packId = pack?.public.id ?? lockedBible?.packId ?? null;
   bible.substyle = substyle;
   bible = stitchEpisodeFrames(bible);
 
@@ -265,18 +330,35 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   ctx.progress(0.8, "搭画布");
   writeCanvas(projectId, directory, bible, payload.imageEndpointId ?? null);
 
+  let seriesId = existingSeries?.id ?? null;
+  let episodeIndex: number | null = null;
+  if (seriesId) {
+    episodeIndex = attachEpisode(seriesId, projectId, bible, JSON.stringify(bible.palette));
+  } else if (payload.seriesName?.trim()) {
+    const created = createSeries({
+      name: payload.seriesName.trim(),
+      kind: payload.kind === "whiteboard" ? "whiteboard" : "drama",
+      stylePackId: pack?.public.id ?? null,
+      substyle,
+    });
+    seriesId = created.id;
+    episodeIndex = attachEpisode(seriesId, projectId, bible, JSON.stringify(bible.palette));
+  }
+
   const t1 = now();
   db.run("UPDATE pipelines SET status = ?, currentStep = ?, stateJson = ?, updatedAt = ? WHERE id = ?", [
     "done",
     "canvas",
-    JSON.stringify({ bible, story }),
+    JSON.stringify({ bible, story, seriesId, episodeIndex }),
     t1,
     runId,
   ]);
-  ctx.progress(1, "5 集初稿已搭好");
+  ctx.progress(1, continuing ? `第 ${episodeIndex} 集已搭好` : "5 集初稿已搭好");
   return {
     pipelineId: runId,
     projectId,
+    seriesId,
+    episodeIndex,
     title: bible.title,
     episodeCount: bible.episodes.length,
     shotCount: bible.episodes.reduce((n, e) => n + e.shots.length, 0),

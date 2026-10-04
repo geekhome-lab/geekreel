@@ -2,10 +2,11 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { sanitizeTitle, type Project } from "@vw/core";
+import { sanitizeTitle, type Project, type SeriesKind } from "@vw/core";
 import { db } from "../db";
 import { err, newId, now, ok } from "../lib/resp";
 import { libraryRoot } from "../services/library";
+import { attachEpisode, createSeries, getSeries } from "../services/series";
 
 function rowToProject(row: Record<string, unknown>): Project {
   return row as unknown as Project;
@@ -66,7 +67,14 @@ projectsRoutes.post("/", async (c) => {
  * 目录名：MMDD_标题_hash，与资产命名规范一致。
  */
 projectsRoutes.post("/quick", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { name?: string };
+  const body = (await c.req.json().catch(() => ({}))) as {
+    name?: string;
+    seriesId?: string;
+    seriesName?: string;
+    kind?: SeriesKind;
+    stylePackId?: string;
+    substyle?: string;
+  };
   const name = body.name?.trim() || "未命名项目";
 
   const id = newId();
@@ -88,6 +96,23 @@ projectsRoutes.post("/quick", async (c) => {
   db.run("INSERT INTO projects (id, name, directory, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)", [
     id, name, dir, t, t,
   ]);
+
+  let seriesId = body.seriesId?.trim() || null;
+  if (seriesId && !getSeries(seriesId)) return err(c, "这部连载不存在", 404);
+  if (!seriesId && body.seriesName?.trim()) {
+    seriesId = createSeries({
+      name: body.seriesName.trim(),
+      kind: body.kind === "whiteboard" ? "whiteboard" : body.kind === "drama" ? "drama" : "free",
+      stylePackId: body.stylePackId,
+      substyle: body.substyle,
+    }).id;
+  }
+  if (seriesId) {
+    const s = getSeries(seriesId);
+    attachEpisode(seriesId, id, null, s?.paletteJson ?? null);
+    if (s?.stylePackId) db.run("UPDATE projects SET stylePackId = ?, paletteJson = ? WHERE id = ?", [s.stylePackId, s.paletteJson, id]);
+  }
+
   const row = db.query("SELECT * FROM projects WHERE id = ?").get(id) as Record<string, unknown>;
   return ok(c, rowToProject(row));
 });

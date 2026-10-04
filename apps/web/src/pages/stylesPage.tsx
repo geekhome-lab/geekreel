@@ -42,7 +42,12 @@ export function StylesPage() {
   }, [pack, endpoints]);
 
   const start = async () => {
-    if (!pack || !story.trim() || busy) return;
+    if (!pack || busy) return;
+    if (pack.id !== "whiteboard") {
+      navigate("/drama");
+      return;
+    }
+    if (!story.trim()) return;
     if (!pack.ready) {
       setError(pack.unavailableReason || "这套风格还不能用");
       return;
@@ -160,7 +165,7 @@ export function StylesPage() {
               </div>
             )}
 
-            {pack.substyles.length > 0 && (
+            {pack.id === "whiteboard" && pack.substyles.length > 0 && (
               <div>
                 <h3 className="mb-2 text-xs text-fg-faint">子风格（一剧只用一个）</h3>
                 <div className="flex flex-wrap gap-1.5">
@@ -185,18 +190,21 @@ export function StylesPage() {
                 贴字幕就能出纸底片子。配了图片模型以后，还可以到画布里换成手绘线稿。
               </p>
             )}
+            {pack.id !== "whiteboard" && (
+              <p className="text-xs text-fg-dim">
+                小说转短剧请到单独一页：上传文本或贴链接，并选连载。子风格在那边选。
+              </p>
+            )}
 
+            {pack.id === "whiteboard" && (
             <textarea
               rows={5}
               className="w-full resize-none rounded-xl border border-line bg-panel p-3 text-sm outline-none focus:border-accent-dim"
-              placeholder={
-                pack.id === "whiteboard"
-                  ? "贴一段 SRT，或按行写口播。例如：先把问题说清楚"
-                  : "写一句故事，或贴一段小说。例如：武松在景阳冈打虎。"
-              }
+              placeholder="贴一段 SRT，或按行写口播。例如：先把问题说清楚"
               value={story}
               onChange={(e) => setStory(e.target.value)}
             />
+            )}
             {error && (
               <div className="rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
                 {error}{" "}
@@ -207,17 +215,15 @@ export function StylesPage() {
             )}
             <button
               className="flex items-center gap-1.5 rounded-xl bg-accent px-5 py-2 text-sm font-medium text-black disabled:opacity-40"
-              disabled={!pack.ready || !story.trim() || busy}
+              disabled={!pack.ready || busy || (pack.id === "whiteboard" && !story.trim())}
               onClick={start}
             >
               {iconPlay({ width: 14, height: 14 })}
               {busy
-                ? pack.id === "whiteboard"
-                  ? "做片子…"
-                  : "拆集中…"
+                ? "做片子…"
                 : pack.id === "whiteboard"
                   ? "做成白板片子"
-                  : "用此风格做成片"}
+                  : "去小说转短剧"}
             </button>
           </div>
         )}

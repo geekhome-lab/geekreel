@@ -139,6 +139,24 @@ export interface Project {
   coverAssetId: string | null;
   stylePackId: string | null;
   paletteJson: string | null;
+  seriesId: string | null;
+  episodeIndex: number | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type SeriesKind = "drama" | "free" | "whiteboard";
+
+export interface Series {
+  id: string;
+  name: string;
+  kind: SeriesKind;
+  stylePackId: string | null;
+  substyle: string | null;
+  paletteJson: string | null;
+  bibleJson: string | null;
+  episodeCount: number;
+  lastProjectId: string | null;
   createdAt: number;
   updatedAt: number;
 }

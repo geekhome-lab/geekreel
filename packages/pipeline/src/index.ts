@@ -8,6 +8,9 @@ import type { DramaAssetItem, DramaBible, DramaEpisode, DramaShot, PaletteDoc } 
 export const NOVEL_DRAMA_SYSTEM =
   "你是国风短剧编剧。把故事拆成正好 5 集、每集 3 个镜头的可拍摄圣经。只输出 JSON，不要解释。";
 
+export const NOVEL_CONTINUE_SYSTEM =
+  "你是国风短剧编剧。这是一部已有连载的下一集。必须沿用已锁定的人物、场景和色盘，只写这一集。只输出 JSON，不要解释。";
+
 export function novelDramaPrompt(story: string, packHint: string): string {
   return `把下面的故事做成短剧圣经。必须正好 5 集，每集 3 镜（0-5s / 5-10s / 10-15s）。
 用说书人旁白体制：开场定调、过场压缩、结尾点题用第三人称短句。
@@ -20,7 +23,25 @@ ${packHint}
 ${story.trim()}`;
 }
 
-export function parseDramaBible(text: string, fallbackStory: string): DramaBible {
+export function novelContinuePrompt(
+  story: string,
+  packHint: string,
+  locked: { title: string; episodeIndex: number; lastFrame: string; assetsLine: string; paletteLine: string },
+): string {
+  return `这是连载《${locked.title}》的第 ${locked.episodeIndex} 集。必须沿用已有人物和场景，不要改造型、不要换色盘。
+${packHint}
+已锁定色盘：${locked.paletteLine || "沿用上集"}
+已锁定资产：${locked.assetsLine || "沿用上集"}
+上集尾帧：${locked.lastFrame || "无"}
+
+只输出 1 集、3 镜的 JSON：
+{"title":"${locked.title}","palette":{"note":"沿用","colors":[]},"assets":[],"episodes":[{"index":${locked.episodeIndex},"title":"本集标题","synopsis":"本集一事","narrator":"说书人旁白","lastFrame":"本集最后一格","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图（先不要写风格词）"}]}]}
+
+本集故事：
+${story.trim()}`;
+}
+
+export function parseDramaBible(text: string, fallbackStory: string, opts?: { episodeCount?: number }): DramaBible {
   const trimmed = text.trim();
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(trimmed);
   const raw = fenced?.[1] ?? trimmed;
@@ -28,19 +49,19 @@ export function parseDramaBible(text: string, fallbackStory: string): DramaBible
   const end = raw.lastIndexOf("}");
   if (start >= 0 && end > start) {
     try {
-      return normalizeBible(JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>, fallbackStory);
+      return normalizeBible(JSON.parse(raw.slice(start, end + 1)) as Record<string, unknown>, fallbackStory, opts?.episodeCount ?? 5);
     } catch {
       /* 走兜底 */
     }
   }
-  return fallbackBible(fallbackStory);
+  return fallbackBible(fallbackStory, opts?.episodeCount ?? 5);
 }
 
-function normalizeBible(r: Record<string, unknown>, fallbackStory: string): DramaBible {
+function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episodeCount: number): DramaBible {
   const palette = normalizePalette(r.palette);
   const assets = Array.isArray(r.assets) ? r.assets.map(normalizeAsset).filter((a) => a.name) : [];
   let episodes = Array.isArray(r.episodes) ? r.episodes.map(normalizeEpisode) : [];
-  episodes = fillToFive(episodes, fallbackStory, String(r.title ?? "").trim() || guessTitle(fallbackStory));
+  episodes = fillToN(episodes, fallbackStory, String(r.title ?? "").trim() || guessTitle(fallbackStory), episodeCount);
   return {
     title: String(r.title ?? "").trim() || guessTitle(fallbackStory),
     packId: null,
@@ -102,9 +123,10 @@ function normalizeShot(raw: unknown, i: number): DramaShot {
   };
 }
 
-function fillToFive(episodes: DramaEpisode[], story: string, title: string): DramaEpisode[] {
-  const out = episodes.slice(0, 5);
-  while (out.length < 5) {
+function fillToN(episodes: DramaEpisode[], story: string, title: string, n: number): DramaEpisode[] {
+  const need = Math.max(1, Math.min(5, n));
+  const out = episodes.slice(0, need);
+  while (out.length < need) {
     const i = out.length;
     out.push({
       index: i + 1,
@@ -126,7 +148,7 @@ function defaultShots(seed: string): DramaShot[] {
   ];
 }
 
-export function fallbackBible(story: string): DramaBible {
+export function fallbackBible(story: string, episodeCount = 5): DramaBible {
   const title = guessTitle(story);
   return {
     title,
@@ -134,7 +156,7 @@ export function fallbackBible(story: string): DramaBible {
     substyle: null,
     palette: defaultPalette(),
     assets: [{ id: "C01", kind: "character", name: "主角", prompt: story.slice(0, 40) || "主角" }],
-    episodes: fillToFive([], story, title),
+    episodes: fillToN([], story, title, episodeCount),
   };
 }
 
@@ -152,6 +174,7 @@ export function defaultPalette(): PaletteDoc {
 }
 
 export * from "./whiteboard";
+export * from "./fetchNovel";
 
 export function guessTitle(story: string): string {
   const line = story.replace(/\s+/g, " ").trim();

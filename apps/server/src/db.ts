@@ -220,6 +220,23 @@ function ensureColumn(table: string, column: string, ddl: string) {
 }
 ensureColumn("projects", "stylePackId", "stylePackId TEXT");
 ensureColumn("projects", "paletteJson", "paletteJson TEXT");
+ensureColumn("projects", "seriesId", "seriesId TEXT");
+ensureColumn("projects", "episodeIndex", "episodeIndex INTEGER");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS series (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'drama',
+  stylePackId TEXT,
+  substyle TEXT,
+  paletteJson TEXT,
+  bibleJson TEXT,
+  episodeCount INTEGER NOT NULL DEFAULT 0,
+  lastProjectId TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+)`);
 
 // ---------------------------------------------------------------------------
 // 设置读写

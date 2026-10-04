@@ -1,43 +1,48 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Capability, ModelEndpoint } from "@vw/models";
 import { capabilityLabels } from "@vw/models";
-import type { Project } from "@vw/core";
-import type { Job, StylePackPublic } from "@vw/core";
+import type { Project, Series, StylePackPublic } from "@vw/core";
+import type { Job } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
 import { waitForJob } from "../lib/runGen";
 import { iconPlay } from "../lib/icons";
 
-/**
- * 对话式首页：小白主入口。
- * 一句话 → 自动建项目（免选目录）→ 自动搭画布 → 自动开跑。
- */
+type Intent = "free" | "whiteboard" | "remake";
+type SeriesMode = "new" | "continue" | "none";
 
-type Intent = "free" | "drama" | "whiteboard" | "remake";
-
-const intents: Array<{ key: Intent; label: string; hint: string; ready: boolean }> = [
-  { key: "free", label: "自由创作", hint: "一句话出图", ready: true },
-  { key: "drama", label: "小说转短剧", hint: "上美影风拆成 5 集", ready: true },
-  { key: "whiteboard", label: "白板动画", hint: "贴字幕就能出片", ready: true },
-  { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的", ready: true },
+const intents: Array<{ key: Intent; label: string; hint: string }> = [
+  { key: "free", label: "自由创作", hint: "一句话出图，一步步确认" },
+  { key: "whiteboard", label: "白板动画", hint: "贴字幕就能出片" },
+  { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的" },
 ];
 
 const modelCaps: Capability[] = ["llm", "image", "video", "tts"];
 
+type ChatLine = { role: "bot" | "user"; text: string };
+
 export function HomePage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const setPendingAutoRun = useAppStore((s) => s.setPendingAutoRun);
+  const prefSeries = params.get("series") ?? "";
+  const prefKind = params.get("kind");
 
   const [text, setText] = useState("");
-  const [intent, setIntent] = useState<Intent>("free");
-  const [substyle, setSubstyle] = useState("flat");
+  const [intent, setIntent] = useState<Intent>(prefKind === "whiteboard" ? "whiteboard" : prefKind === "remake" ? "remake" : "free");
+  const [step, setStep] = useState<"write" | "guide">("write");
+  const [guide, setGuide] = useState<"idea" | "series" | "name" | "pick" | "style" | "go">("idea");
+  const [lines, setLines] = useState<ChatLine[]>([]);
+  const [seriesMode, setSeriesMode] = useState<SeriesMode>(prefSeries ? "continue" : "new");
+  const [seriesName, setSeriesName] = useState("");
+  const [seriesId, setSeriesId] = useState(prefSeries);
+  const [packId, setPackId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
-  // 模型选择：默认取各能力的默认端点，用户选择持久化到 localStorage
   const [pref, setPref] = useState<Record<string, string>>(() => {
     try {
       return JSON.parse(localStorage.getItem("vw.modelPref") ?? "{}") as Record<string, string>;
@@ -54,7 +59,10 @@ export function HomePage() {
     queryKey: ["styles"],
     queryFn: () => api<StylePackPublic[]>("/api/styles"),
   });
-  const smy = packs?.find((p) => p.id === "smy-animation");
+  const { data: seriesList } = useQuery({
+    queryKey: ["series"],
+    queryFn: () => api<Series[]>("/api/series"),
+  });
 
   const byCap = useMemo(() => {
     const map: Record<Capability, ModelEndpoint[]> = { llm: [], image: [], video: [], tts: [] };
@@ -68,68 +76,187 @@ export function HomePage() {
     if (chosen && list.some((e) => e.id === chosen)) return chosen;
     return list.find((e) => e.isDefault)?.id ?? list[0]?.id ?? "";
   };
-
   const setPick = (cap: Capability, id: string) => {
     const next = { ...pref, [cap]: id };
     setPref(next);
     localStorage.setItem("vw.modelPref", JSON.stringify(next));
   };
 
-  const start = async () => {
+  const chosenSeries = seriesList?.find((s) => s.id === seriesId) ?? null;
+  const readyPacks = (packs ?? []).filter((p) => p.ready);
+
+  const push = (role: ChatLine["role"], msg: string) => setLines((xs) => [...xs, { role, text: msg }]);
+
+  const beginGuide = () => {
     const input = text.trim();
     if (!input || busy) return;
     setError("");
-
-    // 前置检查：说人话的引导。白板只靠项目自带 ffmpeg，不挡在模型后面。
-    if (intent !== "whiteboard" && byCap.image.length === 0) {
+    if (intent !== "whiteboard" && intent !== "remake" && byCap.image.length === 0) {
       setError("还没有配置图片模型。先到「模型」页添加一个，回来就能出图了。");
       return;
     }
-    if (intent === "drama" && byCap.llm.length === 0) {
-      setError("「小说转短剧」需要文本模型来拆分镜。到「模型」页添加一个文本模型，或先用「自由创作」。");
+    setStep("guide");
+    setGuide("idea");
+    setLines([
+      { role: "user", text: input },
+      {
+        role: "bot",
+        text:
+          intent === "whiteboard"
+            ? "按「白板动画」来做。下面这段当口播/字幕，对吗？"
+            : intent === "remake"
+              ? "按「复刻爆款」来做。我拿这段当参考（链接或说明），对吗？"
+              : "按「自由创作」来做。我把这句话当成这一集的想法，对吗？",
+      },
+    ]);
+  };
+
+  const confirmIdea = () => {
+    push("user", "对，就这段");
+    if (prefSeries || (seriesMode === "continue" && seriesId)) {
+      const sid = seriesId || prefSeries;
+      const s = seriesList?.find((x) => x.id === sid);
+      if (s) {
+        confirmPick(s.id);
+        return;
+      }
+    }
+    setGuide("series");
+    push("bot", "这是新开一部连载，接到已经在做的一部，还是这次单独做？连载会锁风格和人物，下次能接着拍。");
+  };
+
+  const chooseSeries = (mode: SeriesMode) => {
+    setSeriesMode(mode);
+    if (mode === "new") {
+      push("user", "新开一部连载");
+      setGuide("name");
+      push("bot", "给这部起个名字。以后做下一集时，选这部就能沿用人物和风格。");
       return;
     }
-
-    if (intent === "remake") {
-      if (/^https?:\/\//i.test(input)) navigate(`/analyze?url=${encodeURIComponent(input)}`);
-      else navigate("/analyze");
+    if (mode === "continue") {
+      push("user", "接到已有连载");
+      if (!seriesList?.length) {
+        push("bot", "还没有连载。先新开一部，或这次单独做。");
+        return;
+      }
+      setGuide("pick");
+      push("bot", "接到哪一部？");
       return;
     }
+    push("user", "这次单独做");
+    afterSeries();
+  };
 
+  const afterSeries = () => {
+    if (intent === "free") {
+      setGuide("style");
+      push("bot", "要套一套风格吗？也可以先不套，只出图。");
+      return;
+    }
+    setGuide("go");
+    push("bot", summaryLine());
+  };
+
+  const summaryLine = () => {
+    const serial =
+      seriesMode === "new"
+        ? `新连载「${seriesName.trim() || text.trim().slice(0, 12)}」第 1 集`
+        : seriesMode === "continue" && chosenSeries
+          ? `「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集`
+          : "不挂连载";
+    if (intent === "whiteboard") return `确认：白板动画 · ${serial}。开始做纸底片子？`;
+    if (intent === "remake") return `确认：去拆这条参考 · ${serial}。下一步打开分析页。`;
+    const style = packId ? readyPacks.find((p) => p.id === packId)?.name : "不套风格";
+    return `确认：自由创作 · ${serial} · ${style}。按这个开做？`;
+  };
+
+  const confirmName = () => {
+    const name = seriesName.trim() || text.trim().slice(0, 12) || "未命名连载";
+    setSeriesName(name);
+    push("user", name);
+    afterSeries();
+  };
+
+  const confirmPick = (id: string) => {
+    const s = seriesList?.find((x) => x.id === id);
+    if (!s) return;
+    setSeriesId(id);
+    if (s.stylePackId) setPackId(s.stylePackId);
+    push("user", `接到「${s.name}」`);
+    afterSeries();
+  };
+
+  const finishStyle = (id: string) => {
+    setPackId(id);
+    const label = id ? `用「${readyPacks.find((p) => p.id === id)?.name}」` : "先不套风格";
+    setLines((xs) => [
+      ...xs,
+      { role: "user", text: label },
+      {
+        role: "bot",
+        text:
+          seriesMode === "new"
+            ? `确认：自由创作 · 新连载「${seriesName.trim() || text.trim().slice(0, 12)}」第 1 集 · ${id ? readyPacks.find((p) => p.id === id)?.name : "不套风格"}。按这个开做？`
+            : seriesMode === "continue" && chosenSeries
+              ? `确认：自由创作 · 「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集 · ${id ? readyPacks.find((p) => p.id === id)?.name : "沿用连载风格"}。按这个开做？`
+              : `确认：自由创作 · 不挂连载 · ${id ? readyPacks.find((p) => p.id === id)?.name : "不套风格"}。按这个开做？`,
+      },
+    ]);
+    setGuide("go");
+  };
+
+  const run = async () => {
+    const input = text.trim();
+    if (!input || busy) return;
     setBusy(true);
+    setError("");
     try {
-      if (intent === "drama" || intent === "whiteboard") {
+      if (intent === "remake") {
+        if (/^https?:\/\//i.test(input)) navigate(`/analyze?url=${encodeURIComponent(input)}`);
+        else navigate("/analyze");
+        return;
+      }
+
+      const serialPayload = {
+        seriesId: seriesMode === "continue" ? seriesId || undefined : undefined,
+        seriesName: seriesMode === "new" ? seriesName.trim() || input.slice(0, 12) : undefined,
+        kind: intent === "whiteboard" ? ("whiteboard" as const) : ("free" as const),
+      };
+
+      if (intent === "whiteboard") {
         const job = await apiJson<Job>("/api/pipelines/run", "post", {
           story: input,
-          packId: intent === "whiteboard" ? "whiteboard" : "smy-animation",
-          substyle: intent === "drama" ? substyle : undefined,
-          llmEndpointId: pick("llm") || undefined,
-          imageEndpointId: pick("image") || undefined,
+          packId: "whiteboard",
+          ...serialPayload,
         });
         const done = await waitForJob(job.id, 8 * 60_000);
         const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
         if (!result.projectId) throw new Error("没有建出项目");
         setCurrentProject(result.projectId);
-        if (intent === "whiteboard") {
-          navigate("/timeline");
-        } else {
-          setPendingAutoRun(true);
-          navigate("/canvas");
-        }
+        navigate("/timeline");
         return;
       }
 
       const name = input.replace(/\s+/g, " ").slice(0, 16) || "未命名项目";
-      const project = await apiJson<Project>("/api/projects/quick", "post", { name });
+      const project = await apiJson<Project>("/api/projects/quick", "post", {
+        name,
+        ...serialPayload,
+        stylePackId: packId || undefined,
+      });
       setCurrentProject(project.id);
 
+      const locked = chosenSeries && seriesMode === "continue"
+        ? `这是连载「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集。人物造型、场景和色盘必须和前几集一致。\n\n`
+        : seriesMode === "new"
+          ? `这是连载「${serialPayload.seriesName}」第 1 集。后面几集会沿用这次的人物和场景。\n\n`
+          : "";
       const canvasList = await api<Array<{ id: string }>>(`/api/canvas/project/${project.id}`);
       const canvasId = canvasList[0]!.id;
       await apiJson(`/api/canvas/${canvasId}`, "put", {
         doc: {
           version: 1,
           nodes: [
-            { id: "text_0", type: "textNode", position: { x: 80, y: 120 }, data: { text: input } },
+            { id: "text_0", type: "textNode", position: { x: 80, y: 120 }, data: { text: locked + input } },
             {
               id: "gen_0",
               type: "imageGenNode",
@@ -141,7 +268,6 @@ export function HomePage() {
           viewport: null,
         },
       });
-
       setPendingAutoRun(true);
       navigate("/canvas");
     } catch (e) {
@@ -150,98 +276,184 @@ export function HomePage() {
     }
   };
 
+  const reset = () => {
+    setStep("write");
+    setGuide("idea");
+    setLines([]);
+    setSeriesMode("new");
+    setSeriesName("");
+    setSeriesId("");
+    setPackId("");
+    setBusy(false);
+    setError("");
+  };
+
   return (
     <div className="flex h-full flex-col items-center justify-center p-6">
       <div className="w-full max-w-2xl">
-        {/* 标题 */}
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-semibold tracking-wide">想做什么视频？</h1>
-          <p className="mt-2 text-sm text-fg-faint">一句话开始。项目、画布、生成，都帮你自动搭好。</p>
+          <p className="mt-2 text-sm text-fg-faint">
+            写一句想法，我一步步问你确认。小说转短剧在左边单独一栏。
+          </p>
         </div>
 
-        {/* 输入框 */}
         <div className="rounded-2xl border border-line bg-panel shadow-xl">
-          <textarea
-            autoFocus
-            rows={4}
-            className="w-full resize-none rounded-t-2xl bg-transparent p-4 text-sm leading-relaxed outline-none placeholder:text-fg-faint"
-            placeholder={
-              intent === "whiteboard"
-                ? "贴一段 SRT，或按行写口播。不用配模型也能出纸底片子。"
-                : intent === "drama"
-                  ? "粘贴一段小说或故事，按上美影风拆成 5 集…"
-                  : "例如：上美影风格的武松打虎，Q 版人物…"
-            }
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) start();
-            }}
-          />
+          {step === "write" && (
+            <textarea
+              autoFocus
+              rows={4}
+              className="w-full resize-none rounded-t-2xl bg-transparent p-4 text-sm leading-relaxed outline-none placeholder:text-fg-faint"
+              placeholder={
+                intent === "whiteboard"
+                  ? "贴一段 SRT，或按行写口播。"
+                  : intent === "remake"
+                    ? "贴一条爆款链接，或写你想复刻的点。"
+                    : "例如：武松在景阳冈打虎，Q 版人物…"
+              }
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) beginGuide();
+              }}
+            />
+          )}
 
-          {/* 模型选择 */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5">
-            {modelCaps.map((cap) => (
-              <ModelPick
-                key={cap}
-                cap={cap}
-                list={byCap[cap]}
-                value={pick(cap)}
-                onChange={(id) => setPick(cap, id)}
-              />
-            ))}
-            <span className="ml-auto text-[10px] text-fg-faint">⌘/Ctrl + Enter 开始</span>
-          </div>
-          {intent === "drama" && smy && smy.substyles.length > 0 && (
-            <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-2">
-              <span className="text-[10px] text-fg-faint">子风格</span>
-              {smy.substyles.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  title={s.hint}
-                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
-                    substyle === s.id ? "bg-accent text-black" : "border border-line text-fg-dim"
-                  }`}
-                  onClick={() => setSubstyle(s.id)}
-                >
-                  {s.name}
-                </button>
+          {step === "guide" && (
+            <div className="max-h-80 space-y-3 overflow-y-auto p-4">
+              {lines.filter((l) => l.text).map((l, i) => (
+                <div key={i} className={l.role === "user" ? "text-right" : "text-left"}>
+                  <div
+                    className={`inline-block max-w-[90%] rounded-2xl px-3 py-2 text-sm ${
+                      l.role === "user" ? "bg-accent text-black" : "bg-panel-2 text-fg"
+                    }`}
+                  >
+                    {l.text}
+                  </div>
+                </div>
               ))}
             </div>
           )}
 
-          {/* 意图 + 发送 */}
-          <div className="flex items-center gap-2 border-t border-line px-4 py-3">
-            <div className="flex flex-wrap gap-1.5">
-              {intents.map((it) => (
-                <button
-                  key={it.key}
-                  disabled={!it.ready}
-                  title={it.ready ? it.hint : `${it.hint}，敬请期待`}
-                  className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                    intent === it.key
-                      ? "bg-accent text-black"
-                      : it.ready
-                        ? "border border-line text-fg-dim hover:border-accent-dim hover:text-fg"
-                        : "border border-line/50 text-fg-faint/50 cursor-not-allowed"
-                  }`}
-                  onClick={() => it.ready && setIntent(it.key)}
-                >
-                  {it.label}
-                  {!it.ready && <span className="ml-1 text-[9px]">· 待上线</span>}
-                </button>
-              ))}
-            </div>
-            <button
-              className="ml-auto flex items-center gap-1.5 rounded-xl bg-accent px-5 py-2 text-sm font-medium text-black hover:brightness-110 disabled:opacity-40"
-              disabled={!text.trim() || busy}
-              onClick={start}
-            >
-              {iconPlay({ width: 14, height: 14 })}
-              {busy ? "准备中…" : "开始"}
-            </button>
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5">
+            {modelCaps.map((cap) => (
+              <ModelPick key={cap} cap={cap} list={byCap[cap]} value={pick(cap)} onChange={(id) => setPick(cap, id)} />
+            ))}
           </div>
+
+          {step === "write" && (
+            <div className="flex items-center gap-2 border-t border-line px-4 py-3">
+              <div className="flex flex-wrap gap-1.5">
+                {intents.map((it) => (
+                  <button
+                    key={it.key}
+                    title={it.hint}
+                    className={`rounded-full px-3 py-1 text-xs transition-colors ${
+                      intent === it.key ? "bg-accent text-black" : "border border-line text-fg-dim hover:text-fg"
+                    }`}
+                    onClick={() => setIntent(it.key)}
+                  >
+                    {it.label}
+                  </button>
+                ))}
+              </div>
+              <button
+                className="ml-auto flex items-center gap-1.5 rounded-xl bg-accent px-5 py-2 text-sm font-medium text-black disabled:opacity-40"
+                disabled={!text.trim()}
+                onClick={beginGuide}
+              >
+                {iconPlay({ width: 14, height: 14 })}
+                下一步
+              </button>
+            </div>
+          )}
+
+          {step === "guide" && (
+            <div className="space-y-2 border-t border-line px-4 py-3">
+              {guide === "idea" && (
+                <div className="flex gap-2">
+                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={confirmIdea}>
+                    对，就这段
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={reset}>
+                    我改一下
+                  </button>
+                </div>
+              )}
+              {guide === "series" && (
+                <div className="flex flex-wrap gap-2">
+                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={() => chooseSeries("new")}>
+                    新开连载
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => chooseSeries("continue")}>
+                    接到已有连载
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => chooseSeries("none")}>
+                    这次单独做
+                  </button>
+                </div>
+              )}
+              {guide === "name" && (
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-sm outline-none"
+                    placeholder="连载名字，例如：景阳冈"
+                    value={seriesName}
+                    onChange={(e) => setSeriesName(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && confirmName()}
+                  />
+                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={confirmName}>
+                    就叫这个
+                  </button>
+                </div>
+              )}
+              {guide === "pick" && (
+                <div className="flex flex-wrap gap-1.5">
+                  {seriesList?.map((s) => (
+                    <button
+                      key={s.id}
+                      className="rounded-full border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim"
+                      onClick={() => confirmPick(s.id)}
+                    >
+                      {s.name} · 已 {s.episodeCount} 集
+                    </button>
+                  ))}
+                </div>
+              )}
+              {guide === "style" && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button className="rounded-full border border-line px-3 py-1 text-xs" onClick={() => finishStyle("")}>
+                    先不套
+                  </button>
+                  {readyPacks.map((p) => (
+                    <button
+                      key={p.id}
+                      className="rounded-full border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim"
+                      onClick={() => finishStyle(p.id)}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              {guide === "go" && (
+                <div className="flex gap-2">
+                  <button
+                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+                    disabled={busy}
+                    onClick={run}
+                  >
+                    {iconPlay({ width: 14, height: 14 })}
+                    {busy ? "准备中…" : "确认，开始"}
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={reset}>
+                    重来
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {error && (
@@ -254,10 +466,11 @@ export function HomePage() {
         )}
 
         <p className="mt-4 text-center text-[11px] text-fg-faint">
+          <button className="underline hover:text-fg" onClick={() => navigate("/drama")}>小说转短剧</button>
+          {" · "}
           <button className="underline hover:text-fg" onClick={() => navigate("/radar")}>看看今天热点</button>
           {" · "}
-          <button className="underline hover:text-fg" onClick={() => navigate("/styles")}>换一套风格</button>
-          {" · "}出图后到「时间线」拼成片
+          <button className="underline hover:text-fg" onClick={() => navigate("/styles")}>风格中心</button>
         </p>
       </div>
     </div>
@@ -276,7 +489,6 @@ function ModelPick(props: {
       <button
         className="flex items-center gap-1 rounded-lg border border-dashed border-line px-2.5 py-1 text-[11px] text-fg-faint hover:border-accent-dim hover:text-accent"
         onClick={() => navigate("/models")}
-        title={`还没有${capabilityLabels[props.cap]}，点击去配置`}
       >
         {capabilityLabels[props.cap]}：未配置 →
       </button>
@@ -285,11 +497,7 @@ function ModelPick(props: {
   return (
     <label className="flex items-center gap-1.5 rounded-lg border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-fg-dim">
       {capabilityLabels[props.cap]}
-      <select
-        className="max-w-32 bg-transparent text-fg outline-none"
-        value={props.value}
-        onChange={(e) => props.onChange(e.target.value)}
-      >
+      <select className="max-w-32 bg-transparent text-fg outline-none" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
         {props.list.map((ep) => (
           <option key={ep.id} value={ep.id}>{ep.name}</option>
         ))}

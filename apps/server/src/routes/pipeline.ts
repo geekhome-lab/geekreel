@@ -18,13 +18,17 @@ pipelineRoutes.get("/:id", (c) => {
 pipelineRoutes.post("/run", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     story?: string;
+    url?: string;
     packId?: string;
     substyle?: string;
     projectId?: string;
     llmEndpointId?: string;
     imageEndpointId?: string;
+    seriesId?: string;
+    seriesName?: string;
+    kind?: "drama" | "free" | "whiteboard";
   };
-  if (!body.story?.trim()) return err(c, "先写一句故事或贴一段小说");
+  if (!body.story?.trim() && !body.url?.trim()) return err(c, "先上传小说、贴一段正文，或给一个能打开的链接");
   if (body.packId) {
     const pack = loadPack(body.packId);
     if (!pack) return err(c, "没找到这套风格");

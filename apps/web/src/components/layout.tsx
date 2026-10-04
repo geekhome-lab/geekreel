@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublicSettings } from "@vw/core";
 import { api } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { iconAnalyze, iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconPalette, iconRadar, iconScissors, iconSettings, iconTasks } from "../lib/icons";
+import { iconAnalyze, iconBook, iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconPalette, iconRadar, iconScissors, iconSettings, iconTasks } from "../lib/icons";
 
 const navItems = [
   { to: "/", label: "首页", icon: iconChat },
+  { to: "/drama", label: "小说转短剧", icon: iconBook },
   { to: "/radar", label: "雷达", icon: iconRadar },
   { to: "/analyze", label: "分析", icon: iconAnalyze },
   { to: "/styles", label: "风格", icon: iconPalette },
@@ -44,6 +45,7 @@ export function Layout() {
             <NavLink
               key={item.to}
               to={item.to}
+              end={item.to === "/"}
               className={({ isActive }) =>
                 `flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition-colors ${
                   isActive ? "bg-panel-2 text-accent" : "text-fg-dim hover:bg-panel-2 hover:text-fg"

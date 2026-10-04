@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Project } from "@vw/core";
+import type { Project, Series } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { useAppStore } from "../lib/store";
@@ -24,6 +24,11 @@ export function ProjectsPage() {
     queryKey: ["projects"],
     queryFn: () => api<Project[]>("/api/projects"),
   });
+  const { data: seriesList } = useQuery({
+    queryKey: ["series"],
+    queryFn: () => api<Series[]>("/api/series"),
+  });
+  const seriesName = (id: string | null) => seriesList?.find((s) => s.id === id)?.name;
 
   const createMutation = useMutation({
     mutationFn: () => apiJson<Project>("/api/projects", "post", { name, directory }),
@@ -58,6 +63,29 @@ export function ProjectsPage() {
         </button>
       </div>
 
+      {seriesList && seriesList.length > 0 && (
+        <section className="mb-6">
+          <h2 className="mb-2 text-xs text-fg-faint">进行中的连载</h2>
+          <div className="flex flex-wrap gap-2">
+            {seriesList.map((s) => (
+              <button
+                key={s.id}
+                className="rounded-xl border border-line bg-panel px-3 py-2 text-left hover:border-accent-dim"
+                onClick={() => {
+                  if (s.kind === "drama") navigate(`/drama?series=${s.id}`);
+                  else navigate(`/?series=${s.id}&kind=${s.kind}`);
+                }}
+              >
+                <div className="text-sm">{s.name}</div>
+                <div className="text-[11px] text-fg-faint">
+                  {s.kind === "drama" ? "短剧" : s.kind === "whiteboard" ? "白板" : "自由"} · 已 {s.episodeCount} 集 · 继续
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
       {isLoading && <div className="text-sm text-fg-faint">加载中…</div>}
 
       {projects && projects.length === 0 && (
@@ -74,7 +102,14 @@ export function ProjectsPage() {
             className="group rounded-xl border border-line bg-panel p-4 transition-colors hover:border-accent-dim"
           >
             <div className="mb-1 flex items-start justify-between">
-              <div className="truncate text-sm font-medium">{p.name}</div>
+              <div>
+                <div className="truncate text-sm font-medium">{p.name}</div>
+                {p.seriesId && (
+                  <div className="mt-0.5 text-[11px] text-accent">
+                    连载「{seriesName(p.seriesId) ?? "一部"}」{p.episodeIndex ? ` · 第 ${p.episodeIndex} 集` : ""}
+                  </div>
+                )}
+              </div>
               <button
                 className="rounded p-1 text-fg-faint opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
                 title="从列表移除（不删除文件）"

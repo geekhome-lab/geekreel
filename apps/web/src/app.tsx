@@ -14,6 +14,7 @@ import { SettingsPage } from "./pages/settingsPage";
 import { RadarPage } from "./pages/radarPage";
 import { AnalyzePage } from "./pages/analyzePage";
 import { StylesPage } from "./pages/stylesPage";
+import { DramaPage } from "./pages/dramaPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -47,6 +48,7 @@ function WsBridge() {
           qc.invalidateQueries({ queryKey: ["analyze-reports"] });
           qc.invalidateQueries({ queryKey: ["styles"] });
           qc.invalidateQueries({ queryKey: ["projects"] });
+          qc.invalidateQueries({ queryKey: ["series"] });
         }
       }
       if (ev.type === "radar.upsert") qc.invalidateQueries({ queryKey: ["radar-board"] });
@@ -64,6 +66,7 @@ export function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
+            <Route path="/drama" element={<DramaPage />} />
             <Route path="/radar" element={<RadarPage />} />
             <Route path="/analyze" element={<AnalyzePage />} />
             <Route path="/styles" element={<StylesPage />} />
