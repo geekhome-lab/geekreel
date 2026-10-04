@@ -5,7 +5,12 @@ import { api } from "../../lib/api";
 import { Modal } from "../modal";
 
 /** 资产选择器：从资产库挑一个资产挂到节点上 */
-export function AssetPickerModal(props: { onSelect: (asset: Asset) => void; onClose: () => void }) {
+export function AssetPickerModal(props: {
+  onSelect: (asset: Asset) => void;
+  onClose: () => void;
+  accept?: AssetType[];
+}) {
+  const allowed = props.accept ?? (["image", "video", "audio", "text"] as AssetType[]);
   const [type, setType] = useState("");
 
   const { data: assets } = useQuery({
@@ -17,7 +22,7 @@ export function AssetPickerModal(props: { onSelect: (asset: Asset) => void; onCl
     <Modal title="选择资产" onClose={props.onClose} width="w-[680px]">
       <div className="space-y-3">
         <div className="flex gap-1.5">
-          {["", "image", "video", "audio", "text"].map((t) => (
+          {["", ...allowed].map((t) => (
             <button
               key={t}
               className={`rounded-md px-3 py-1 text-xs ${
@@ -33,7 +38,7 @@ export function AssetPickerModal(props: { onSelect: (asset: Asset) => void; onCl
           {assets?.length === 0 && (
             <div className="col-span-4 py-8 text-center text-xs text-fg-faint">资产库为空，请先到「资产库」页导入</div>
           )}
-          {assets?.map((a) => (
+          {assets?.filter((a) => allowed.includes(a.type)).map((a) => (
             <button
               key={a.id}
               className="overflow-hidden rounded-lg border border-line bg-panel-2 text-left hover:border-accent-dim"

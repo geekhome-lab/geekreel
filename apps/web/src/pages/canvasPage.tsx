@@ -50,6 +50,7 @@ function newNodeId() {
 }
 
 function CanvasInner(props: { projectId: string }) {
+  const navigate = useNavigate();
   const { screenToFlowPosition, updateNodeData, getNodes, getEdges } = useReactFlow();
   const [canvasMeta, setCanvasMeta] = useState<CanvasMeta | null>(null);
   const [nodes, setNodes] = useState<Node[]>([]);
@@ -286,6 +287,19 @@ function CanvasInner(props: { projectId: string }) {
           <span className="px-1 text-[10px] text-fg-faint">
             {saveState === "saved" ? "已保存" : saveState === "saving" ? "保存中…" : "待保存"}
           </span>
+          <button
+            className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black hover:brightness-110"
+            onClick={async () => {
+              try {
+                await apiJson(`/api/timeline/project/${props.projectId}/from-canvas`, "post");
+                navigate("/timeline");
+              } catch (e) {
+                alert(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            送到时间线
+          </button>
         </div>
 
         <ReactFlow

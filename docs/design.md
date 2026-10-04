@@ -133,9 +133,11 @@ React Flow 无限画布。节点类型：
 
 ### 3.5 时间线
 
-- 多轨道（视频×N / 音频×N / 字幕×1），片段 = 资产引用 + in/out + 转场 + 变速 + 音量 + 滤镜。
-- 预览走代理 + 预览渲染任务；导出生成 ffmpeg `filter_complex` 脚本进任务队列。
-- 字幕：SRT 导入导出，TTS 可自动生成字幕轨；词级对齐（WhisperX/faster-whisper sidecar，可选）支持卡拉OK字幕。
+- **M3 已落地**：1 条视频轨 + N 条音频轨 + 1 条字幕轨；硬切（无转场）；图片按静帧 loop 上视频轨。
+- 片段 = 资产引用 + in/out + 音量；字幕片段带文本，支持 SRT 导入。
+- 小白路径：画布出图后点「送到时间线」/「从画布装上」——文生图节点按从左到右排成镜头，对应文本写成字幕。
+- 预览：浏览器时钟驱动播放头，视频走代理、静帧走原图；导出走 bundled ffmpeg `filter_complex` 进任务队列，成片写入项目 `export/` 并收入资产库。
+- 后续：转场/变速/滤镜、TTS 自动字幕、词级对齐（WhisperX/faster-whisper sidecar，可选）。
 
 ### 3.6 模型配置中心（Model Center）
 
@@ -450,7 +452,7 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 | `/api/remake/templates/*` · `POST /api/remake/run` | 复刻模板与批量变体 |
 | `/api/styles` · `POST /api/styles/:id/apply` | 风格包列表 / 应用到项目 |
 | `/api/pipelines/*` | 流水线控制（advance / retry-step） |
-| `/api/timeline/:id/render` | 时间线导出 |
+| `GET/PUT /api/timeline/project/:projectId` · `POST .../from-canvas` · `POST /api/timeline/render` | 时间线读写、从画布装配、导出 |
 | `/api/settings` 含 `libraryRoot` 读写与迁移 | 全局设置 |
 | `WS /ws` | `job.*` `pipeline.*` `radar.*` `push.*` 事件 |
 
@@ -484,7 +486,7 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 | --- | --- | --- |
 | **M1 骨架 + 资产库**（1.5 周） | monorepo、server+web 打通、项目 CRUD、**统一资产库（选目录/分类存储/命名规范）**、导入+索引、资产管理页基础版（浏览/预览/删除）、任务中心 + WS | 选定资产库目录，导入视频自动按 `video/2026-10/1004_xxx.mp4` 落盘，管理页可见可播 |
 | **M2 模型中心 + 画布**（1.5 周） | 适配器×端点（含 webSearch 标记）、OpenAI 兼容适配器、连通性测试；React Flow 画布、资产/文本/文生图节点、链式运行 | 自配文本+图片端点，文本→文生图跑通，产物自动入库 |
-| **M3 时间线**（2 周） | 轨道剪辑、裁剪/转场、预览渲染、ffmpeg 导出、SRT 字幕 | 3 段视频加字幕导出 mp4 |
+| **M3 时间线**（已落地） | 视频/音频/字幕轨、拖拽裁剪、静帧图、SRT、预览、ffmpeg 导出；「从画布装上」零操作成片 | 画布出图一键上时间线，3 段素材加字幕导出 mp4 |
 | **M4 雷达 + 推送**（1 周） | AI 查询源模板 5 个、调度、榜单、订阅 + Server酱/TG 推送、每日早报 | 配好联网文本端点后，关键词命中收到 TG 推送，点链接建项目 |
 | **M5 竞品分析 + 复刻**（2 周） | yt-dlp 下载、抽帧转写、LLM 报告页、转模板、单变体跑通 | 粘贴抖音链接出报告，复刻出一条新片 |
 | **M6 风格中心 + 上美影包**（2 周） | 风格包契约+加载器、中心 UI、上美影包全流程（色盘注入/子风格/分镜模板/尾帧衔接）、小说转短剧通用模板 | 一句话故事跑出 5 集上美影短剧初稿；往目录丢一个测试包能被发现 |

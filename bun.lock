@@ -57,6 +57,7 @@
       "name": "@vw/media",
       "version": "0.1.0",
       "dependencies": {
+        "@vw/core": "workspace:*",
         "ffmpeg-static": "^5.3.0",
         "ffprobe-static": "^3.1.0",
       },

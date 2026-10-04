@@ -15,6 +15,7 @@ import { fsRoutes } from "./routes/fs";
 import { modelsRoutes } from "./routes/models";
 import { genRoutes } from "./routes/gen";
 import { canvasRoutes } from "./routes/canvas";
+import { timelineRoutes } from "./routes/timeline";
 
 export const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -33,6 +34,7 @@ export function createApp() {
   app.route("/api/models", modelsRoutes);
   app.route("/api/gen", genRoutes);
   app.route("/api/canvas", canvasRoutes);
+  app.route("/api/timeline", timelineRoutes);
 
   app.get(
     "/ws",

@@ -219,7 +219,7 @@ export function HomePage() {
         )}
 
         <p className="mt-4 text-center text-[11px] text-fg-faint">
-          高级玩法在左侧：画布自由编排 · 资产库 · 任务中心
+          出图后可到「时间线」拼成片 · 画布自由编排 · 资产库
         </p>
       </div>
     </div>

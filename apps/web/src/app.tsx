@@ -7,6 +7,7 @@ import { HomePage } from "./pages/homePage";
 import { ProjectsPage } from "./pages/projectsPage";
 import { AssetsPage } from "./pages/assetsPage";
 import { CanvasPage } from "./pages/canvasPage";
+import { TimelinePage } from "./pages/timelinePage";
 import { ModelsPage } from "./pages/modelsPage";
 import { JobsPage } from "./pages/jobsPage";
 import { SettingsPage } from "./pages/settingsPage";
@@ -50,6 +51,7 @@ export function App() {
             <Route index element={<HomePage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/canvas" element={<CanvasPage />} />
+            <Route path="/timeline" element={<TimelinePage />} />
             <Route path="/assets" element={<AssetsPage />} />
             <Route path="/models" element={<ModelsPage />} />
             <Route path="/jobs" element={<JobsPage />} />

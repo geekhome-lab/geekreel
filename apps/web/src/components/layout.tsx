@@ -3,12 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublicSettings } from "@vw/core";
 import { api } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconSettings, iconTasks } from "../lib/icons";
+import { iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconScissors, iconSettings, iconTasks } from "../lib/icons";
 
 const navItems = [
   { to: "/", label: "首页", icon: iconChat },
   { to: "/projects", label: "项目", icon: iconFolder },
   { to: "/canvas", label: "画布", icon: iconCanvas },
+  { to: "/timeline", label: "时间线", icon: iconScissors },
   { to: "/assets", label: "资产库", icon: iconBox },
   { to: "/models", label: "模型", icon: iconCpu },
   { to: "/jobs", label: "任务中心", icon: iconTasks },
@@ -32,7 +33,7 @@ export function Layout() {
       <aside className="flex w-52 shrink-0 flex-col border-r border-line bg-panel">
         <div className="border-b border-line px-4 py-4">
           <div className="text-sm font-semibold tracking-wide">视频工作台</div>
-          <div className="mt-0.5 text-[10px] text-fg-faint">Video Workbench · M1</div>
+          <div className="mt-0.5 text-[10px] text-fg-faint">Video Workbench</div>
         </div>
 
         <nav className="flex-1 space-y-0.5 p-2">

@@ -59,3 +59,11 @@ export async function submitImageGen(input: {
     body: JSON.stringify(input),
   });
 }
+
+export async function submitRender(projectId: string): Promise<Job> {
+  return api<Job>("/api/timeline/render", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+}

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, unlinkSync, copyFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, unlinkSync, copyFileSync, linkSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import {
   buildAssetRelPath,
@@ -72,9 +72,10 @@ export interface StoreInput {
   ext: string;
   source: AssetSource;
   projectId?: string | null;
-  /** 二选一：内存数据 或 磁盘源文件（拷贝入库） */
+  /** 三选一：内存数据 / 磁盘源文件（拷贝）/ 硬链接入库（零拷贝，同卷时） */
   data?: Uint8Array | ArrayBuffer;
   fromPath?: string;
+  linkFromPath?: string;
 }
 
 /** 资产入库：按 类型/年月/日期_标题_hash 落盘（原子写），建行，提交索引任务 */
@@ -85,15 +86,20 @@ export function storeAsset(input: StoreInput): Asset {
   const abs = absInLibrary(relPath);
   mkdirSync(dirname(abs), { recursive: true });
 
-  const tmp = `${abs}.tmp-${process.pid}`;
-  if (input.data !== undefined) {
-    Bun.write(tmp, input.data);
-  } else if (input.fromPath) {
-    copyFileSync(input.fromPath, tmp);
+  if (input.linkFromPath) {
+    // 硬链接直接落在目标路径（同文件系统零拷贝）；失败由调用方回退拷贝
+    linkSync(input.linkFromPath, abs);
   } else {
-    throw new Error("缺少资产内容");
+    const tmp = `${abs}.tmp-${process.pid}`;
+    if (input.data !== undefined) {
+      Bun.write(tmp, input.data);
+    } else if (input.fromPath) {
+      copyFileSync(input.fromPath, tmp);
+    } else {
+      throw new Error("缺少资产内容");
+    }
+    renameSync(tmp, abs);
   }
-  renameSync(tmp, abs);
 
   const sizeBytes = Bun.file(abs).size;
   const name = relPath.split("/").pop()!;

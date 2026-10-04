@@ -9,6 +9,8 @@ import { join } from "node:path";
 import ffmpegStaticPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 
+export * from "./timeline";
+
 export interface MediaBins {
   ffmpeg: string | null;
   ffprobe: string | null;
@@ -214,6 +216,16 @@ export async function audioWaveform(bin: string, input: string, output: string, 
     args: ["-i", input, "-filter_complex", "showwavespic=s=640x360:split_channels=0", "-frames:v", "1", output],
     signal,
   });
+}
+
+/** 检测 ffmpeg 是否支持 subtitles 滤镜（libass，字幕烧录用） */
+export async function hasSubtitlesFilter(bin: string): Promise<boolean> {
+  try {
+    const proc = Bun.spawnSync([bin, "-hide_banner", "-filters"], { stdout: "pipe", stderr: "ignore" });
+    return proc.stdout.toString().includes("subtitles");
+  } catch {
+    return false;
+  }
 }
 
 /** 视频代理（720p h264 + aac，faststart），进度 0-1 */
