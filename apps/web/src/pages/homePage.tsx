@@ -4,8 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import type { Capability, ModelEndpoint } from "@vw/models";
 import { capabilityLabels } from "@vw/models";
 import type { Project } from "@vw/core";
+import type { Job, StylePackPublic } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
+import { waitForJob } from "../lib/runGen";
 import { iconPlay } from "../lib/icons";
 
 /**
@@ -17,7 +19,7 @@ type Intent = "free" | "drama" | "whiteboard" | "remake";
 
 const intents: Array<{ key: Intent; label: string; hint: string; ready: boolean }> = [
   { key: "free", label: "自由创作", hint: "一句话出图", ready: true },
-  { key: "drama", label: "小说转短剧", hint: "故事拆分镜出图", ready: true },
+  { key: "drama", label: "小说转短剧", hint: "上美影风拆成 5 集", ready: true },
   { key: "whiteboard", label: "白板动画", hint: "M7 上线", ready: false },
   { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的", ready: true },
 ];
@@ -31,6 +33,7 @@ export function HomePage() {
 
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<Intent>("free");
+  const [substyle, setSubstyle] = useState("flat");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -47,6 +50,11 @@ export function HomePage() {
     queryKey: ["model-endpoints"],
     queryFn: () => api<ModelEndpoint[]>("/api/models/endpoints"),
   });
+  const { data: packs } = useQuery({
+    queryKey: ["styles"],
+    queryFn: () => api<StylePackPublic[]>("/api/styles"),
+  });
+  const smy = packs?.find((p) => p.id === "smy-animation");
 
   const byCap = useMemo(() => {
     const map: Record<Capability, ModelEndpoint[]> = { llm: [], image: [], video: [], tts: [] };
@@ -90,49 +98,46 @@ export function HomePage() {
 
     setBusy(true);
     try {
-      // 1. 零提问建项目
+      if (intent === "drama") {
+        const job = await apiJson<Job>("/api/pipelines/run", "post", {
+          story: input,
+          packId: "smy-animation",
+          substyle,
+          llmEndpointId: pick("llm") || undefined,
+          imageEndpointId: pick("image") || undefined,
+        });
+        const done = await waitForJob(job.id, 8 * 60_000);
+        const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
+        if (!result.projectId) throw new Error("没有建出项目");
+        setCurrentProject(result.projectId);
+        setPendingAutoRun(true);
+        navigate("/canvas");
+        return;
+      }
+
       const name = input.replace(/\s+/g, " ").slice(0, 16) || "未命名项目";
       const project = await apiJson<Project>("/api/projects/quick", "post", { name });
       setCurrentProject(project.id);
 
-      // 2. 准备分镜：短剧意图用 LLM 拆，自由创作就是输入本身
-      let shots: string[] = [input];
-      if (intent === "drama") {
-        try {
-          const { text: llmText } = await apiJson<{ text: string }>("/api/gen/chat", "post", {
-            prompt: `你是短剧分镜师。把下面的故事拆成 3 到 5 个关键画面，每行输出一个画面的文生图提示词（纯画面描述，不要编号、不要解释、不要台词）：\n\n${input}`,
-            endpointId: pick("llm") || undefined,
-          });
-          const lines = llmText.split("\n").map((l) => l.replace(/^[\d一二三四五六七八九十、.\-\s]+/, "").trim()).filter(Boolean);
-          if (lines.length >= 2) shots = lines.slice(0, 5);
-        } catch {
-          // LLM 失败降级为单画面
-        }
-      }
-
-      // 3. 搭画布：每个分镜一条 文本→文生图 链
       const canvasList = await api<Array<{ id: string }>>(`/api/canvas/project/${project.id}`);
       const canvasId = canvasList[0]!.id;
-      const nodes: unknown[] = [];
-      const edges: unknown[] = [];
-      shots.forEach((shot, i) => {
-        const x = 80 + i * 620;
-        const textId = `text_${i}`;
-        const genId = `gen_${i}`;
-        nodes.push(
-          { id: textId, type: "textNode", position: { x, y: 120 }, data: { text: shot } },
-          {
-            id: genId,
-            type: "imageGenNode",
-            position: { x: x + 320, y: 100 },
-            data: { prompt: "", size: "1024x1024", endpointId: pick("image") || null, status: "idle" },
-          },
-        );
-        edges.push({ id: `e_${i}`, source: textId, sourceHandle: "out", target: genId, targetHandle: "prompt", animated: true });
+      await apiJson(`/api/canvas/${canvasId}`, "put", {
+        doc: {
+          version: 1,
+          nodes: [
+            { id: "text_0", type: "textNode", position: { x: 80, y: 120 }, data: { text: input } },
+            {
+              id: "gen_0",
+              type: "imageGenNode",
+              position: { x: 400, y: 100 },
+              data: { prompt: "", size: "1024x1024", endpointId: pick("image") || null, status: "idle" },
+            },
+          ],
+          edges: [{ id: "e_0", source: "text_0", sourceHandle: "out", target: "gen_0", targetHandle: "prompt", animated: true }],
+          viewport: null,
+        },
       });
-      await apiJson(`/api/canvas/${canvasId}`, "put", { doc: { version: 1, nodes, edges, viewport: null } });
 
-      // 4. 进画布并自动开跑
       setPendingAutoRun(true);
       navigate("/canvas");
     } catch (e) {
@@ -158,7 +163,7 @@ export function HomePage() {
             className="w-full resize-none rounded-t-2xl bg-transparent p-4 text-sm leading-relaxed outline-none placeholder:text-fg-faint"
             placeholder={
               intent === "drama"
-                ? "粘贴一段小说或故事，帮你拆成分镜画面…"
+                ? "粘贴一段小说或故事，按上美影风拆成 5 集…"
                 : "例如：上美影风格的武松打虎，Q 版人物…"
             }
             value={text}
@@ -181,6 +186,24 @@ export function HomePage() {
             ))}
             <span className="ml-auto text-[10px] text-fg-faint">⌘/Ctrl + Enter 开始</span>
           </div>
+          {intent === "drama" && smy && smy.substyles.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1.5 border-t border-line px-4 py-2">
+              <span className="text-[10px] text-fg-faint">子风格</span>
+              {smy.substyles.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  title={s.hint}
+                  className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+                    substyle === s.id ? "bg-accent text-black" : "border border-line text-fg-dim"
+                  }`}
+                  onClick={() => setSubstyle(s.id)}
+                >
+                  {s.name}
+                </button>
+              ))}
+            </div>
+          )}
 
           {/* 意图 + 发送 */}
           <div className="flex items-center gap-2 border-t border-line px-4 py-3">
@@ -226,6 +249,8 @@ export function HomePage() {
 
         <p className="mt-4 text-center text-[11px] text-fg-faint">
           <button className="underline hover:text-fg" onClick={() => navigate("/radar")}>看看今天热点</button>
+          {" · "}
+          <button className="underline hover:text-fg" onClick={() => navigate("/styles")}>换一套风格</button>
           {" · "}出图后到「时间线」拼成片
         </p>
       </div>

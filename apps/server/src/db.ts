@@ -182,6 +182,26 @@ CREATE TABLE IF NOT EXISTS remake_runs (
   createdAt INTEGER NOT NULL
 )`);
 
+db.run(`
+CREATE TABLE IF NOT EXISTS pipelines (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  templateId TEXT NOT NULL,
+  packId TEXT,
+  status TEXT NOT NULL,
+  currentStep TEXT NOT NULL DEFAULT '',
+  stateJson TEXT NOT NULL DEFAULT '{}',
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+)`);
+
+function ensureColumn(table: string, column: string, ddl: string) {
+  const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+}
+ensureColumn("projects", "stylePackId", "stylePackId TEXT");
+ensureColumn("projects", "paletteJson", "paletteJson TEXT");
+
 // ---------------------------------------------------------------------------
 // 设置读写
 // ---------------------------------------------------------------------------

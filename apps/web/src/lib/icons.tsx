@@ -99,3 +99,7 @@ export const iconRadar = (p: SVGProps<SVGSVGElement>) => (
 export const iconAnalyze = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M3 3h7v7H3Z" /><path d="M14 3h7v7h-7Z" /><path d="M14 14h7v7h-7Z" /><path d="M3 14h7v7H3Z" /></svg>
 );
+
+export const iconPalette = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="12" cy="12" r="9" /><circle cx="9" cy="9" r="1.4" fill="currentColor" /><circle cx="15" cy="9" r="1.4" fill="currentColor" /><circle cx="9.5" cy="14.5" r="1.4" fill="currentColor" /><circle cx="14.5" cy="14.5" r="1.4" fill="currentColor" /></svg>
+);

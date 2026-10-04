@@ -1,0 +1,9 @@
+{
+  "id": "smy-drama",
+  "name": "上美影风短剧",
+  "steps": [
+    { "id": "bible", "label": "拆 5 集剧本和色盘" },
+    { "id": "inject", "label": "注入风格与尾帧" },
+    { "id": "canvas", "label": "搭画布分镜" }
+  ]
+}

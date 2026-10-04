@@ -15,7 +15,9 @@
     "@vw/models": "workspace:*",
     "@vw/push": "workspace:*",
     "@vw/radar": "workspace:*",
+    "@vw/pipeline": "workspace:*",
     "@vw/remake": "workspace:*",
+    "@vw/style": "workspace:*",
     "hono": "^4.8.0"
   },
   "devDependencies": {

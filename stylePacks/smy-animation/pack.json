@@ -1,0 +1,18 @@
+{
+  "id": "smy-animation",
+  "name": "上美影风",
+  "version": "1.0.0",
+  "summary": "上海美术电影制片厂气质：水墨线、矿物色平涂、概括造型、胶片颗粒。一句话故事拆成 5 集短剧初稿。",
+  "cover": "samples/cover.svg",
+  "previewColors": ["#C23A2B", "#2F6F8F", "#E2B23A", "#F3E6C8"],
+  "requiredCapabilities": ["llm", "image"],
+  "defaultSubstyle": "flat",
+  "ready": true,
+  "substyles": [
+    { "id": "flat", "name": "手绘平涂", "hint": "矿物色块，最稳" },
+    { "id": "ink", "name": "石蓝淡墨绘本", "hint": "浅淡墨色，留白多" },
+    { "id": "wash", "name": "水墨淡彩", "hint": "小蝌蚪找妈妈式" },
+    { "id": "paper", "name": "剪纸风", "hint": "葫芦兄弟式" },
+    { "id": "dunhuang", "name": "敦煌重彩", "hint": "九色鹿式" }
+  ]
+}

@@ -20,6 +20,8 @@ import { radarRoutes } from "./routes/radar";
 import { pushRoutes } from "./routes/push";
 import { analyzeRoutes } from "./routes/analyze";
 import { remakeRoutes } from "./routes/remake";
+import { stylesRoutes } from "./routes/styles";
+import { pipelineRoutes } from "./routes/pipeline";
 
 export const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -43,6 +45,8 @@ export function createApp() {
   app.route("/api/push", pushRoutes);
   app.route("/api/analyze", analyzeRoutes);
   app.route("/api/remake", remakeRoutes);
+  app.route("/api/styles", stylesRoutes);
+  app.route("/api/pipelines", pipelineRoutes);
 
   app.get(
     "/ws",

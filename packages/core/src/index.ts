@@ -7,6 +7,7 @@ import type { PushLog, RadarItem } from "./radar";
 export * from "./timeline";
 export * from "./radar";
 export * from "./analyze";
+export * from "./style";
 
 // ---------------------------------------------------------------------------
 // 资产
@@ -135,6 +136,8 @@ export interface Project {
   name: string;
   directory: string;
   coverAssetId: string | null;
+  stylePackId: string | null;
+  paletteJson: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -181,6 +184,7 @@ export const jobTypeLabels: Record<string, string> = {
   "radar.digest": "雷达早报",
   "analyze.run": "竞品分析",
   "remake.run": "爆款复刻",
+  "pipeline.run": "风格流水线",
 };
 
 // ---------------------------------------------------------------------------

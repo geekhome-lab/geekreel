@@ -1,0 +1,12 @@
+{
+  "id": "whiteboard",
+  "name": "手绘白板",
+  "version": "0.1.0",
+  "summary": "暖米黄纸底、深灰素描线。下一期接 SRT 和渲染器，现在先占位，丢进目录就能被发现。",
+  "cover": "samples/cover.svg",
+  "previewColors": ["#F5EBD7", "#3A332C", "#C4542A", "#2F6F8F"],
+  "requiredCapabilities": ["llm", "image"],
+  "ready": false,
+  "unavailableReason": "白板渲染器下一期才接。现在可以把包放在这里，风格中心已经能看到。",
+  "substyles": []
+}

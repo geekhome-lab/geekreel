@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360">
+  <rect width="640" height="360" fill="#F3E6C8"/>
+  <rect x="40" y="40" width="180" height="280" fill="#C23A2B"/>
+  <rect x="240" y="80" width="160" height="200" fill="#2F6F8F"/>
+  <rect x="420" y="50" width="180" height="120" fill="#E2B23A"/>
+  <circle cx="500" cy="260" r="56" fill="#2A2118"/>
+  <text x="56" y="300" fill="#F3E6C8" font-size="36" font-family="serif">
+Žq</text>
+</svg>

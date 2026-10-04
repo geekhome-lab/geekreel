@@ -17,9 +17,11 @@
         "@vw/core": "workspace:*",
         "@vw/media": "workspace:*",
         "@vw/models": "workspace:*",
+        "@vw/pipeline": "workspace:*",
         "@vw/push": "workspace:*",
         "@vw/radar": "workspace:*",
         "@vw/remake": "workspace:*",
+        "@vw/style": "workspace:*",
         "hono": "^4.8.0",
       },
       "devDependencies": {
@@ -90,6 +92,18 @@
         "typescript": "^5.8.0",
       },
     },
+    "packages/pipeline": {
+      "name": "@vw/pipeline",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+        "@vw/style": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
+      },
+    },
     "packages/push": {
       "name": "@vw/push",
       "version": "0.1.0",
@@ -114,6 +128,17 @@
     },
     "packages/remake": {
       "name": "@vw/remake",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
+      },
+    },
+    "packages/style": {
+      "name": "@vw/style",
       "version": "0.1.0",
       "dependencies": {
         "@vw/core": "workspace:*",
@@ -355,6 +380,8 @@
 
     "@vw/models": ["@vw/models@workspace:packages/models"],
 
+    "@vw/pipeline": ["@vw/pipeline@workspace:packages/pipeline"],
+
     "@vw/push": ["@vw/push@workspace:packages/push"],
 
     "@vw/radar": ["@vw/radar@workspace:packages/radar"],
@@ -362,6 +389,8 @@
     "@vw/remake": ["@vw/remake@workspace:packages/remake"],
 
     "@vw/server": ["@vw/server@workspace:apps/server"],
+
+    "@vw/style": ["@vw/style@workspace:packages/style"],
 
     "@vw/web": ["@vw/web@workspace:apps/web"],
 

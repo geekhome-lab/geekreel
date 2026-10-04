@@ -9,6 +9,8 @@ import { fetchRadarHandler, digestRadarHandler, seedRadarSources } from "./servi
 import { startRadarScheduler } from "./services/scheduler";
 import { analyzeRunHandler } from "./services/analyze";
 import { remakeRunHandler } from "./services/remake";
+import { pipelineRunHandler } from "./services/pipeline";
+import { listPacks } from "./services/styles";
 import { libraryRoot } from "./services/library";
 import { detectYtdlp } from "@vw/analyze";
 
@@ -20,6 +22,7 @@ jobQueue.register("radar.fetch", fetchRadarHandler, 2);
 jobQueue.register("radar.digest", digestRadarHandler, 1);
 jobQueue.register("analyze.run", analyzeRunHandler, 1);
 jobQueue.register("remake.run", remakeRunHandler, 2);
+jobQueue.register("pipeline.run", pipelineRunHandler, 1);
 jobQueue.recover();
 seedRadarSources();
 startRadarScheduler();
@@ -41,3 +44,5 @@ console.log(`[vw] 资产库根目录: ${libraryRoot()}`);
 console.log(`[vw] ffmpeg: ${bins.available ? `${bins.ffmpeg} (${bins.source})` : "未检测到 —— 缩略图/代理不可用，安装后重启生效"}`);
 const ytdlp = detectYtdlp();
 console.log(`[vw] yt-dlp: ${ytdlp.bin ? `${ytdlp.bin} (${ytdlp.source})` : "未打包 —— 将在首次分析时写入 vendor/，或从资产库分析"}`);
+const packs = listPacks();
+console.log(`[vw] 风格包: ${packs.map((p) => `${p.name}${p.ready ? "" : "(未开放)"}`).join("、") || "无"}`);
