@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Capability, ModelEndpoint } from "@vw/models";
 import { capabilityLabels } from "@vw/models";
-import type { Project, Series, StylePackPublic } from "@vw/core";
+import type { DramaBible, FreePlan, Project, Series, StylePackPublic } from "@vw/core";
 import type { Job } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
@@ -34,12 +34,14 @@ export function HomePage() {
   const [text, setText] = useState("");
   const [intent, setIntent] = useState<Intent>(prefKind === "whiteboard" ? "whiteboard" : prefKind === "remake" ? "remake" : "free");
   const [step, setStep] = useState<"write" | "guide">("write");
-  const [guide, setGuide] = useState<"idea" | "series" | "name" | "pick" | "style" | "go">("idea");
+  const [guide, setGuide] = useState<"idea" | "series" | "name" | "pick" | "style" | "go" | "plan" | "revise">("idea");
   const [lines, setLines] = useState<ChatLine[]>([]);
   const [seriesMode, setSeriesMode] = useState<SeriesMode>(prefSeries ? "continue" : "new");
   const [seriesName, setSeriesName] = useState("");
   const [seriesId, setSeriesId] = useState(prefSeries);
   const [packId, setPackId] = useState("");
+  const [plan, setPlan] = useState<FreePlan | null>(null);
+  const [reviseText, setReviseText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,6 +64,11 @@ export function HomePage() {
   const { data: seriesList } = useQuery({
     queryKey: ["series"],
     queryFn: () => api<Series[]>("/api/series"),
+  });
+  const { data: seriesDetail } = useQuery({
+    queryKey: ["series", seriesId],
+    queryFn: () => api<Series & { bible: DramaBible | null }>(`/api/series/${seriesId}`),
+    enabled: !!seriesId,
   });
 
   const byCap = useMemo(() => {
@@ -91,10 +98,6 @@ export function HomePage() {
     const input = text.trim();
     if (!input || busy) return;
     setError("");
-    if (intent !== "whiteboard" && intent !== "remake" && byCap.image.length === 0) {
-      setError("还没有配置图片模型。先到「模型」页添加一个，回来就能出图了。");
-      return;
-    }
     setStep("guide");
     setGuide("idea");
     setLines([
@@ -205,15 +208,80 @@ export function HomePage() {
     setGuide("go");
   };
 
+  const lockedLine = () => {
+    const cast = seriesDetail?.bible?.cast ?? [];
+    if (seriesMode !== "continue" || !cast.length) return "";
+    return cast.map((c) => `${c.name}${c.appearance ? `（${c.appearance}）` : ""}`).join("、");
+  };
+
+  const draftPlan = async () => {
+    const input = text.trim();
+    if (!input || busy) return;
+    if (intent === "remake" && /^https?:\/\//i.test(input)) {
+      navigate(`/analyze?url=${encodeURIComponent(input)}&from=home`);
+      return;
+    }
+    if (intent === "whiteboard") {
+      await run();
+      return;
+    }
+    setBusy(true);
+    setError("");
+    push("user", "确认，先看分镜");
+    push("bot", "我按这句话列几镜。不对就点那一镜改，或整份重列。");
+    try {
+      const next = await apiJson<FreePlan>("/api/compose/plan", "post", {
+        story: input,
+        mode: intent === "remake" ? "remake" : "free",
+        lockedLine: lockedLine() || undefined,
+        llmEndpointId: pick("llm") || undefined,
+      });
+      setPlan(next);
+      setGuide("plan");
+      push("bot", `${next.title}：${next.summary}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const applyRevise = async () => {
+    if (!plan || busy) return;
+    const instruction = reviseText.trim();
+    if (!instruction) return;
+    setBusy(true);
+    setError("");
+    push("user", instruction);
+    try {
+      const next = await apiJson<FreePlan>("/api/compose/revise", "post", {
+        plan,
+        instruction,
+        llmEndpointId: pick("llm") || undefined,
+      });
+      setPlan(next);
+      setReviseText("");
+      setGuide("plan");
+      push("bot", `改好了。${next.title}：${next.summary}`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const run = async () => {
     const input = text.trim();
     if (!input || busy) return;
+    if (intent !== "whiteboard" && byCap.image.length === 0) {
+      setError("还没有配置图片模型。分镜可以先看，出图要到「模型」页加一个。");
+      return;
+    }
     setBusy(true);
     setError("");
     try {
-      if (intent === "remake") {
-        if (/^https?:\/\//i.test(input)) navigate(`/analyze?url=${encodeURIComponent(input)}`);
-        else navigate("/analyze");
+      if (intent === "remake" && /^https?:\/\//i.test(input)) {
+        navigate(`/analyze?url=${encodeURIComponent(input)}&from=home`);
         return;
       }
 
@@ -252,21 +320,31 @@ export function HomePage() {
           : "";
       const canvasList = await api<Array<{ id: string }>>(`/api/canvas/project/${project.id}`);
       const canvasId = canvasList[0]!.id;
-      await apiJson(`/api/canvas/${canvasId}`, "put", {
-        doc: {
-          version: 1,
-          nodes: [
-            { id: "text_0", type: "textNode", position: { x: 80, y: 120 }, data: { text: locked + input } },
-            {
-              id: "gen_0",
-              type: "imageGenNode",
-              position: { x: 400, y: 100 },
-              data: { prompt: "", size: "1024x1024", endpointId: pick("image") || null, status: "idle" },
-            },
-          ],
-          edges: [{ id: "e_0", source: "text_0", sourceHandle: "out", target: "gen_0", targetHandle: "prompt", animated: true }],
-          viewport: null,
+      const shots = plan?.shots?.length ? plan.shots : [{ id: "S01", visual: input, line: "", imagePrompt: input }];
+      const nodes = shots.flatMap((shot, i) => [
+        {
+          id: `text_${i}`,
+          type: "textNode",
+          position: { x: 80, y: 80 + i * 220 },
+          data: { text: `${i === 0 ? locked : ""}${shot.visual}${shot.line ? `\n${shot.line}` : ""}` },
         },
+        {
+          id: `gen_${i}`,
+          type: "imageGenNode",
+          position: { x: 420, y: 60 + i * 220 },
+          data: { prompt: shot.imagePrompt, size: "1024x1024", endpointId: pick("image") || null, status: "idle" },
+        },
+      ]);
+      const edges = shots.map((_, i) => ({
+        id: `e_${i}`,
+        source: `text_${i}`,
+        sourceHandle: "out",
+        target: `gen_${i}`,
+        targetHandle: "prompt",
+        animated: true,
+      }));
+      await apiJson(`/api/canvas/${canvasId}`, "put", {
+        doc: { version: 1, nodes, edges, viewport: null },
       });
       setPendingAutoRun(true);
       navigate("/canvas");
@@ -284,6 +362,8 @@ export function HomePage() {
     setSeriesName("");
     setSeriesId("");
     setPackId("");
+    setPlan(null);
+    setReviseText("");
     setBusy(false);
     setError("");
   };
@@ -332,6 +412,17 @@ export function HomePage() {
                   </div>
                 </div>
               ))}
+              {plan && (guide === "plan" || guide === "revise") && (
+                <ol className="space-y-1.5">
+                  {plan.shots.map((s, i) => (
+                    <li key={s.id} className="rounded-xl border border-line bg-panel-2 px-3 py-2 text-xs">
+                      <div className="text-[10px] text-fg-faint">第 {i + 1} 镜</div>
+                      <div className="text-sm text-fg">{s.visual || s.imagePrompt}</div>
+                      {s.line && <div className="text-fg-dim">台词：{s.line}</div>}
+                    </li>
+                  ))}
+                </ol>
+              )}
             </div>
           )}
 
@@ -442,13 +533,57 @@ export function HomePage() {
                   <button
                     className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
                     disabled={busy}
-                    onClick={run}
+                    onClick={() => void draftPlan()}
                   >
                     {iconPlay({ width: 14, height: 14 })}
-                    {busy ? "准备中…" : "确认，开始"}
+                    {busy ? "列分镜…" : intent === "whiteboard" ? "确认，开始" : intent === "remake" && /^https?:\/\//i.test(text.trim()) ? "确认，去拆" : "确认，先看分镜"}
                   </button>
                   <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={reset}>
                     重来
+                  </button>
+                </div>
+              )}
+              {guide === "plan" && (
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+                    disabled={busy}
+                    onClick={() => void run()}
+                  >
+                    {iconPlay({ width: 14, height: 14 })}
+                    {busy ? "搭画布…" : "就这样，开做"}
+                  </button>
+                  <button
+                    className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim"
+                    disabled={busy}
+                    onClick={() => setGuide("revise")}
+                  >
+                    我改一下
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-faint" onClick={reset}>
+                    重来
+                  </button>
+                </div>
+              )}
+              {guide === "revise" && (
+                <div className="flex gap-2">
+                  <input
+                    autoFocus
+                    className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-sm outline-none"
+                    placeholder="例如：第一镜改成夜景，钩子再狠一点"
+                    value={reviseText}
+                    onChange={(e) => setReviseText(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void applyRevise()}
+                  />
+                  <button
+                    className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40"
+                    disabled={busy || !reviseText.trim()}
+                    onClick={() => void applyRevise()}
+                  >
+                    {busy ? "在改…" : "按这个重列"}
+                  </button>
+                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => setGuide("plan")}>
+                    取消
                   </button>
                 </div>
               )}

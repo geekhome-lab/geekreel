@@ -129,3 +129,17 @@ export interface PipelineRun {
   createdAt: number;
   updatedAt: number;
 }
+
+/** 自由创作 / 无链接复刻：先列分镜，用户确认后再搭画布 */
+export interface FreeShot {
+  id: string;
+  visual: string;
+  line: string;
+  imagePrompt: string;
+}
+
+export interface FreePlan {
+  title: string;
+  summary: string;
+  shots: FreeShot[];
+}

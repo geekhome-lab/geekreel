@@ -206,6 +206,7 @@ export function defaultPalette(): PaletteDoc {
 export * from "./whiteboard";
 export * from "./fetchNovel";
 export * from "./cast";
+export * from "./free";
 
 export function guessTitle(story: string): string {
   const line = story.replace(/\s+/g, " ").trim();

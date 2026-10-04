@@ -160,6 +160,23 @@ export function AnalyzePage() {
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
+        {params.get("from") === "home" && report && compareIds.length !== 2 && !remaking && (
+          <div className="mb-4 rounded-xl border border-accent-dim bg-panel p-3 text-xs">
+            <div className="mb-1 font-medium text-accent">拆好了，先看一眼</div>
+            <p className="text-fg-dim">钩子：{report.report.hook.summary || "—"}</p>
+            <p className="mt-1 text-fg-faint">
+              {report.report.rhythm.shotCount} 镜 · 结构 {report.report.structure.map((s) => s.name).join(" → ") || "未标"}
+            </p>
+            <div className="mt-2 flex gap-2">
+              <button className="rounded-lg bg-accent px-3 py-1 text-black" onClick={() => setRemaking(report)}>
+                换成我的主题
+              </button>
+              <button className="rounded-lg border border-line px-3 py-1 text-fg-dim" onClick={() => navigate("/analyze")}>
+                我先自己看
+              </button>
+            </div>
+          </div>
+        )}
         {compareIds.length === 2 ? (
           <CompareView
             left={reports?.find((r) => r.id === compareIds[0]) ?? null}
@@ -371,6 +388,7 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
   const vars = props.report.report.template.variables;
   const [values, setValues] = useState<Record<string, string>>(() => Object.fromEntries(vars.map((v) => [v, ""])));
   const [variantCount, setVariantCount] = useState(1);
+  const [step, setStep] = useState<"fill" | "confirm">("fill");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -399,42 +417,78 @@ function RemakeModal(props: { report: AnalysisReport; onClose: () => void }) {
 
   return (
     <Modal title="换成我的主题" onClose={props.onClose} width="w-[440px]">
-      <p className="mb-3 text-xs text-fg-faint">骨架沿用「{props.report.report.template.name}」，只换你的内容。可一次开多个变体，各自一套画布和时间线。</p>
-      <div className="space-y-2">
-        {vars.map((v) => (
-          <input
-            key={v}
-            className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
-            placeholder={v}
-            value={values[v] ?? ""}
-            onChange={(e) => setValues((m) => ({ ...m, [v]: e.target.value }))}
-          />
-        ))}
-      </div>
-      <label className="mt-3 flex items-center justify-between text-xs text-fg-dim">
-        变体数量
-        <select
-          className="rounded-lg border border-line bg-panel-2 px-2 py-1"
-          value={variantCount}
-          onChange={(e) => setVariantCount(Number(e.target.value))}
-        >
-          {[1, 2, 3, 4, 5].map((n) => (
-            <option key={n} value={n}>{n} 个</option>
-          ))}
-        </select>
-      </label>
-      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
-      <div className="mt-4 flex justify-end gap-2">
-        <button className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim" onClick={props.onClose}>取消</button>
-        <button
-          className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-40"
-          disabled={busy}
-          onClick={run}
-        >
-          {iconPlus({ width: 12, height: 12 })}
-          {busy ? "改写中…" : "做成片"}
-        </button>
-      </div>
+      {step === "fill" ? (
+        <>
+          <p className="mb-3 text-xs text-fg-faint">骨架沿用「{props.report.report.template.name}」，只换你的内容。可一次开多个变体，各自一套画布和时间线。</p>
+          <div className="space-y-2">
+            {vars.map((v) => (
+              <input
+                key={v}
+                className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+                placeholder={v}
+                value={values[v] ?? ""}
+                onChange={(e) => setValues((m) => ({ ...m, [v]: e.target.value }))}
+              />
+            ))}
+          </div>
+          <label className="mt-3 flex items-center justify-between text-xs text-fg-dim">
+            变体数量
+            <select
+              className="rounded-lg border border-line bg-panel-2 px-2 py-1"
+              value={variantCount}
+              onChange={(e) => setVariantCount(Number(e.target.value))}
+            >
+              {[1, 2, 3, 4, 5].map((n) => (
+                <option key={n} value={n}>{n} 个</option>
+              ))}
+            </select>
+          </label>
+          {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+          <div className="mt-4 flex justify-end gap-2">
+            <button className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim" onClick={props.onClose}>取消</button>
+            <button
+              className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-black"
+              onClick={() => setStep("confirm")}
+            >
+              下一步，确认槽位
+            </button>
+          </div>
+        </>
+      ) : (
+        <>
+          <p className="mb-3 text-xs text-fg-faint">按这个做成 {variantCount} 个变体。槽位数量和时长不改，只换你填的内容。</p>
+          <p className="mb-2 text-sm font-medium">{props.report.report.template.name}</p>
+          <ul className="mb-3 space-y-1.5 text-xs">
+            {props.report.report.template.slots.map((slot) => (
+              <li key={slot.id} className="rounded-lg border border-line bg-panel-2 px-2 py-1.5">
+                <span className="text-accent">{slot.id}</span>
+                <span className="text-fg-faint"> · {slot.maxSec}s · </span>
+                {slot.shotDesc}
+                {slot.lineSlot && <div className="text-fg-dim">台词槽：{slot.lineSlot}</div>}
+              </li>
+            ))}
+          </ul>
+          <ul className="mb-3 space-y-0.5 text-xs text-fg-dim">
+            {vars.map((v) => (
+              <li key={v}>{v}：{values[v]?.trim() || "（空着，模型自己补）"}</li>
+            ))}
+          </ul>
+          {error && <p className="mb-2 text-xs text-red-400">{error}</p>}
+          <div className="flex justify-end gap-2">
+            <button className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim" onClick={() => setStep("fill")}>
+              返回改
+            </button>
+            <button
+              className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+              disabled={busy}
+              onClick={run}
+            >
+              {iconPlus({ width: 12, height: 12 })}
+              {busy ? "改写中…" : "确认，做成片"}
+            </button>
+          </div>
+        </>
+      )}
     </Modal>
   );
 }

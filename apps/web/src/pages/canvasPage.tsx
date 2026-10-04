@@ -345,36 +345,53 @@ function CanvasInner(props: { projectId: string }) {
       <div className="relative h-full">
         {waiting && (
           <div className="absolute top-14 left-3 z-10 max-w-lg rounded-xl border border-accent-dim bg-panel/95 p-3 text-xs shadow-xl">
-            <div className="mb-1 font-medium text-accent">剧本已拆好，先看一眼再搭画布</div>
-            <p className="mb-2 text-fg-dim">
-              {waiting.bible?.title ?? "短剧"} · {waiting.bible?.episodes.length ?? 0} 集
-            </p>
-            <ul className="mb-2 max-h-24 overflow-auto text-fg-faint">
-              {waiting.bible?.episodes.map((ep) => (
-                <li key={ep.index}>第 {ep.index} 集 {ep.title}</li>
-              ))}
-            </ul>
-            <div className="flex gap-2">
-              <button
-                className="rounded-lg bg-accent px-3 py-1 text-black"
-                onClick={async () => {
-                  await apiJson(`/api/pipelines/${waiting.id}/advance`, "post");
-                  qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
-                  window.location.reload();
-                }}
-              >
-                确认，搭画布
-              </button>
-              <button
-                className="rounded-lg border border-line px-3 py-1 text-fg-dim"
-                onClick={async () => {
-                  await apiJson(`/api/pipelines/${waiting.id}/retry-step`, "post");
-                  qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
-                }}
-              >
-                重拆
-              </button>
-            </div>
+            {waiting.currentStep === "cast" ? (
+              <>
+                <div className="mb-1 font-medium text-accent">人物和事件已列好</div>
+                <p className="mb-2 text-fg-dim">
+                  {waiting.bible?.title ?? "短剧"} · {waiting.bible?.cast?.length ?? 0} 人 · {waiting.bible?.events?.length ?? 0} 条事件
+                </p>
+                <button
+                  className="rounded-lg bg-accent px-3 py-1 text-black"
+                  onClick={() => navigate(`/drama?pipeline=${waiting.id}`)}
+                >
+                  去看档案
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="mb-1 font-medium text-accent">剧本已拆好，先看一眼再搭画布</div>
+                <p className="mb-2 text-fg-dim">
+                  {waiting.bible?.title ?? "短剧"} · {waiting.bible?.episodes.length ?? 0} 集
+                </p>
+                <ul className="mb-2 max-h-24 overflow-auto text-fg-faint">
+                  {waiting.bible?.episodes.map((ep) => (
+                    <li key={ep.index}>第 {ep.index} 集 {ep.title}</li>
+                  ))}
+                </ul>
+                <div className="flex gap-2">
+                  <button
+                    className="rounded-lg bg-accent px-3 py-1 text-black"
+                    onClick={async () => {
+                      await apiJson(`/api/pipelines/${waiting.id}/advance`, "post");
+                      qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
+                      window.location.reload();
+                    }}
+                  >
+                    确认，搭画布
+                  </button>
+                  <button
+                    className="rounded-lg border border-line px-3 py-1 text-fg-dim"
+                    onClick={async () => {
+                      await apiJson(`/api/pipelines/${waiting.id}/retry-step`, "post");
+                      qc.invalidateQueries({ queryKey: ["pipelines", props.projectId] });
+                    }}
+                  >
+                    重拆
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
         {/* 工具栏 */}
