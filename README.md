@@ -200,7 +200,7 @@ GeekReel AI Studio 跑在你自己的机器上。没有账号，没有云端成�
 **环境**：已安装 [Bun](https://bun.sh)（1.2+）。macOS 已验证。Linux 在 `bun install` 时会按平台补 yt-dlp。不要依赖 Homebrew / pipx 里的 ffmpeg 或 yt-dlp。
 
 ```bash
-git clone https://github.com/geekhome/geekreel.git
+git clone https://github.com/geekhome-lab/geekreel.git
 cd geekreel
 ./scripts/dev.sh
 ```
@@ -296,7 +296,7 @@ bun test packages/models/src/voices.test.ts
 
 ## 许可
 
-可使用、修改、分发，包括商用。再发布时保留 [LICENSE](LICENSE) 并带上开源地址：<https://github.com/geekhome/geekreel>。软件按现状提供，作者不承担担保责任。
+可使用、修改、分发，包括商用。再发布时保留 [LICENSE](LICENSE) 并带上开源地址：<https://github.com/geekhome-lab/geekreel>。软件按现状提供，作者不承担担保责任。
 
 ---
 
@@ -405,7 +405,7 @@ The remaining screens (styles, analyze, novel-to-drama, series, projects, canvas
 Requires [Bun](https://bun.sh) 1.2+. Verified on macOS. `bun install` fetches a matching yt-dlp for the current OS. Do not depend on Homebrew or pipx copies of ffmpeg / yt-dlp.
 
 ```bash
-git clone https://github.com/geekhome/geekreel.git
+git clone https://github.com/geekhome-lab/geekreel.git
 cd geekreel
 ./scripts/dev.sh
 ```
@@ -450,4 +450,4 @@ See [`docs/design.md`](docs/design.md) for tables, API prefixes, and the ADR lis
 
 ## License
 
-Use, modify, and distribute, including commercially. Keep [LICENSE](LICENSE) and a link to <https://github.com/geekhome/geekreel> with redistributions. Provided as-is, without warranty.
+Use, modify, and distribute, including commercially. Keep [LICENSE](LICENSE) and a link to <https://github.com/geekhome-lab/geekreel> with redistributions. Provided as-is, without warranty.
