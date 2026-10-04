@@ -63,8 +63,12 @@ export function StylesPage() {
       const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
       if (!result.projectId) throw new Error("没有建出项目");
       setCurrentProject(result.projectId);
-      setPendingAutoRun(true);
-      navigate("/canvas");
+      if (pack.id === "whiteboard") {
+        navigate("/timeline");
+      } else {
+        setPendingAutoRun(true);
+        navigate("/canvas");
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -87,7 +91,7 @@ export function StylesPage() {
       <div className="w-[300px] shrink-0">
         <h1 className="text-lg font-semibold">风格中心</h1>
         <p className="mt-0.5 mb-3 text-xs text-fg-faint">
-          内置两套。第三套自己加：贴 GitHub 技能链接、让平台写，或上传 SKILL.md。
+          内置两套。第三套自己加：贴 GitHub 技能链接、自定义风格，或上传 SKILL.md。
         </p>
         <div className="mb-3 flex gap-2">
           <button
@@ -137,7 +141,9 @@ export function StylesPage() {
                 <h2 className="text-lg font-semibold">{pack.name}</h2>
                 <p className="mt-1 text-sm text-fg-dim">{pack.summary}</p>
                 <p className="mt-2 text-[11px] text-fg-faint">
-                  需要：{pack.requiredCapabilities.join("、")} · {pack.source === "user" ? "自建" : "内置"}
+                  需要：{pack.requiredCapabilities.length ? pack.requiredCapabilities.join("、") : "不用配模型"}
+                  {" · "}
+                  {pack.source === "user" ? "自建" : "内置"}
                   {pack.originUrl ? " · 来自链接" : ""}
                 </p>
               </div>
@@ -174,10 +180,20 @@ export function StylesPage() {
               </div>
             )}
 
+            {pack.id === "whiteboard" && (
+              <p className="text-xs text-fg-dim">
+                贴字幕就能出纸底片子。配了图片模型以后，还可以到画布里换成手绘线稿。
+              </p>
+            )}
+
             <textarea
               rows={5}
               className="w-full resize-none rounded-xl border border-line bg-panel p-3 text-sm outline-none focus:border-accent-dim"
-              placeholder="写一句故事，或贴一段小说。例如：武松在景阳冈打虎。"
+              placeholder={
+                pack.id === "whiteboard"
+                  ? "贴一段 SRT，或按行写口播。例如：先把问题说清楚"
+                  : "写一句故事，或贴一段小说。例如：武松在景阳冈打虎。"
+              }
               value={story}
               onChange={(e) => setStory(e.target.value)}
             />
@@ -195,7 +211,13 @@ export function StylesPage() {
               onClick={start}
             >
               {iconPlay({ width: 14, height: 14 })}
-              {busy ? "拆集中…" : "用此风格做成片"}
+              {busy
+                ? pack.id === "whiteboard"
+                  ? "做片子…"
+                  : "拆集中…"
+                : pack.id === "whiteboard"
+                  ? "做成白板片子"
+                  : "用此风格做成片"}
             </button>
           </div>
         )}
@@ -287,7 +309,7 @@ function AddStyleModal(props: { onClose: () => void; onAdded: (id: string) => vo
         {(
           [
             ["url", "贴技能链接"],
-            ["write", "平台来写"],
+            ["write", "自定义风格"],
             ["upload", "上传文件"],
           ] as const
         ).map(([k, label]) => (
@@ -327,7 +349,7 @@ function AddStyleModal(props: { onClose: () => void; onAdded: (id: string) => vo
         <textarea
           rows={5}
           className="w-full resize-none rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
-          placeholder="形容这套风格。例如：像短视频带货，商品大特写，红金主色，口播字幕靠下。"
+          placeholder="描述这套风格。例如：短视频带货，商品大特写，红金主色，口播字幕靠下。"
           value={brief}
           onChange={(e) => setBrief(e.target.value)}
         />

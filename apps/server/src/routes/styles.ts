@@ -14,7 +14,7 @@ stylesRoutes.post("/import", async (c) => {
   if (!body.name?.trim()) return err(c, "先给这套风格起个名字，比如「电商带货」");
   if (body.mode === "url" && !body.url?.trim()) return err(c, "把 GitHub 技能链接贴进来");
   if (body.mode === "write" && !body.brief?.trim() && !body.text?.trim()) {
-    return err(c, "写几句这套风格长什么样，平台帮你写成技能");
+    return err(c, "请描述这套风格的视觉特征，将据此生成风格包");
   }
   if (body.mode === "upload" && !body.text?.trim()) return err(c, "上传 SKILL.md，或把内容贴进来");
   const job = jobQueue.submit("style.import", {

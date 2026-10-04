@@ -151,6 +151,8 @@ export function defaultPalette(): PaletteDoc {
   };
 }
 
+export * from "./whiteboard";
+
 export function guessTitle(story: string): string {
   const line = story.replace(/\s+/g, " ").trim();
   return line.slice(0, 12) || "未命名短剧";

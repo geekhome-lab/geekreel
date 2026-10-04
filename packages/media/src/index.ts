@@ -219,6 +219,22 @@ export async function audioWaveform(bin: string, input: string, output: string, 
   });
 }
 
+/** 暖米黄纸底静帧。白板动画用，换机器不依赖本机 Python。 */
+export async function paperStill(
+  bin: string,
+  output: string,
+  opts?: { color?: string; width?: number; height?: number; signal?: AbortSignal },
+) {
+  const color = (opts?.color ?? "#F5EBD7").replace(/^#/, "0x");
+  const w = opts?.width ?? 1280;
+  const h = opts?.height ?? 720;
+  await runFfmpeg({
+    bin,
+    args: ["-f", "lavfi", "-i", `color=c=${color}:s=${w}x${h}:d=1`, "-frames:v", "1", output],
+    signal: opts?.signal,
+  });
+}
+
 /** 检测 ffmpeg 是否支持 subtitles 滤镜（libass，字幕烧录用） */
 export async function hasSubtitlesFilter(bin: string): Promise<boolean> {
   try {

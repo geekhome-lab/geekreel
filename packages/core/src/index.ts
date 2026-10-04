@@ -184,7 +184,7 @@ export const jobTypeLabels: Record<string, string> = {
   "radar.digest": "雷达早报",
   "analyze.run": "竞品分析",
   "remake.run": "爆款复刻",
-  "pipeline.run": "风格流水线",
+  "pipeline.run": "做成片子",
   "style.import": "导入风格",
 };
 

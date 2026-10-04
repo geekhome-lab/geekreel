@@ -1,0 +1,9 @@
+{
+  "id": "whiteboard",
+  "name": "手绘白板动画",
+  "steps": [
+    { "id": "scenes", "label": "分幕" },
+    { "id": "paper", "label": "纸底静帧" },
+    { "id": "timeline", "label": "上时间线和字幕" }
+  ]
+}

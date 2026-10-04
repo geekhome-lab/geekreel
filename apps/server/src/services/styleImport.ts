@@ -63,8 +63,8 @@ export const styleImportHandler: JobHandler = async (job, ctx) => {
     );
   } else if (payload.mode === "write") {
     const brief = payload.brief?.trim() || payload.text?.trim();
-    if (!brief) throw new Error("写几句这套风格长什么样，平台帮你写成技能");
-    ctx.progress(0.3, "平台正在写风格");
+    if (!brief) throw new Error("请描述这套风格的视觉特征，将据此生成风格包");
+    ctx.progress(0.3, "正在生成风格包");
     draft = await draftFromLlm(
       CONVERT_SYSTEM,
       writePrompt(name, brief),

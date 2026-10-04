@@ -1,13 +1,29 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { sanitizeTitle, type DramaBible, type PipelineRun } from "@vw/core";
+import {
+  emptyTimelineDoc,
+  formatSrt,
+  sanitizeTitle,
+  type DramaBible,
+  type PipelineRun,
+  type SrtCue,
+} from "@vw/core";
+import { detectBins, paperStill } from "@vw/media";
 import { getAdapter } from "@vw/models";
-import { injectImagePrompt } from "@vw/style";
-import { novelDramaPrompt, NOVEL_DRAMA_SYSTEM, parseDramaBible, stitchEpisodeFrames } from "@vw/pipeline";
+import { injectImagePrompt, type LoadedPack } from "@vw/style";
+import {
+  bibleFromWhiteboard,
+  novelDramaPrompt,
+  NOVEL_DRAMA_SYSTEM,
+  parseDramaBible,
+  scenesFromInput,
+  stitchEpisodeFrames,
+  type WhiteboardScene,
+} from "@vw/pipeline";
 import { db } from "../db";
-import type { JobHandler } from "../jobs/queue";
+import type { JobContext, JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
-import { libraryRoot } from "./library";
+import { libraryRoot, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
 import { loadPack } from "./styles";
 
@@ -137,8 +153,16 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   if (payload.packId && !pack) throw new Error("没找到这套风格。确认 stylePacks/ 里有对应目录。");
   if (pack && !pack.public.ready) throw new Error(pack.public.unavailableReason || "这套风格还不能用");
 
+  const isWhiteboard = pack?.public.id === "whiteboard";
+  const whiteboard = isWhiteboard ? scenesFromInput(story) : null;
+  if (isWhiteboard && !whiteboard!.scenes.length) {
+    throw new Error("没读出内容。贴一段 SRT，或按行写口播。");
+  }
+
   ctx.progress(0.08, "建项目");
-  const titleHint = story.replace(/\s+/g, " ").slice(0, 16);
+  const titleHint = isWhiteboard
+    ? whiteboard!.scenes[0]!.text.replace(/\s+/g, " ").slice(0, 16) || "白板动画"
+    : story.replace(/\s+/g, " ").slice(0, 16);
   let projectId = payload.projectId;
   let directory = "";
   if (projectId) {
@@ -155,8 +179,22 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   const t0 = now();
   db.run(
     "INSERT INTO pipelines (id, projectId, templateId, packId, status, currentStep, stateJson, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-    [runId, projectId, pack ? "style-drama" : "novel-drama", pack?.public.id ?? null, "running", "bible", "{}", t0, t0],
+    [runId, projectId, isWhiteboard ? "whiteboard" : pack ? "style-drama" : "novel-drama", pack?.public.id ?? null, "running", isWhiteboard ? "scenes" : "bible", "{}", t0, t0],
   );
+
+  if (isWhiteboard && pack && whiteboard) {
+    return runWhiteboard({
+      runId,
+      projectId,
+      directory,
+      pack,
+      story,
+      scenes: whiteboard.scenes,
+      cues: whiteboard.cues,
+      imageEndpointId: payload.imageEndpointId ?? null,
+      ctx,
+    });
+  }
 
   ctx.progress(0.2, "拆 5 集剧本");
   const endpoint = resolveEndpoint("llm", payload.llmEndpointId);
@@ -238,3 +276,117 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
     shotCount: bible.episodes.reduce((n, e) => n + e.shots.length, 0),
   };
 };
+
+async function runWhiteboard(opts: {
+  runId: string;
+  projectId: string;
+  directory: string;
+  pack: LoadedPack;
+  story: string;
+  scenes: WhiteboardScene[];
+  cues: SrtCue[];
+  imageEndpointId: string | null;
+  ctx: JobContext;
+}) {
+  const { runId, projectId, directory, pack, story, scenes, cues, imageEndpointId, ctx } = opts;
+
+  ctx.progress(0.22, "分幕");
+  let bible = bibleFromWhiteboard(scenes[0]?.text ?? "白板动画", scenes);
+  bible.packId = pack.public.id;
+  bible = {
+    ...bible,
+    episodes: bible.episodes.map((ep) => ({
+      ...ep,
+      shots: ep.shots.map((shot) => ({
+        ...shot,
+        imagePrompt: injectImagePrompt({
+          pack,
+          raw: shot.imagePrompt || shot.visual,
+          palette: bible.palette,
+        }),
+      })),
+    })),
+  };
+
+  mkdirSync(join(directory, "pipeline"), { recursive: true });
+  mkdirSync(join(directory, "timeline"), { recursive: true });
+  writeFileSync(join(directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
+  db.run("UPDATE projects SET stylePackId = ?, paletteJson = ?, updatedAt = ? WHERE id = ?", [
+    pack.public.id,
+    JSON.stringify(bible.palette),
+    now(),
+    projectId,
+  ]);
+
+  ctx.progress(0.5, "做纸底");
+  const bins = await detectBins();
+  if (!bins.available || !bins.ffmpeg) {
+    throw new Error("项目自带的 ffmpeg 找不到。把整个项目拷走再试，不要只拷网页。");
+  }
+  const paperPath = join(directory, "pipeline", "paper.png");
+  await paperStill(bins.ffmpeg, paperPath, {
+    color: bible.palette.colors[0]?.hex || "#F5EBD7",
+    signal: ctx.signal,
+  });
+  const paper = storeAsset({
+    type: "image",
+    title: `${bible.title}纸底`,
+    ext: "png",
+    source: "pipeline",
+    projectId,
+    fromPath: paperPath,
+  });
+
+  ctx.progress(0.78, "上时间线和字幕");
+  const endMs = Math.max(2000, ...scenes.map((s) => s.endMs), ...cues.map((c) => c.endMs));
+  const doc = emptyTimelineDoc();
+  doc.width = 1280;
+  doc.height = 720;
+  const vTrack = doc.tracks.find((t) => t.type === "video")!;
+  const sTrack = doc.tracks.find((t) => t.type === "subtitle")!;
+  vTrack.clips.push({
+    id: "c_v_0",
+    assetId: paper.id,
+    startMs: 0,
+    inMs: 0,
+    outMs: endMs,
+    volume: 1,
+  });
+  const subs: SrtCue[] = cues.length
+    ? cues
+    : scenes.map((s) => ({ startMs: s.startMs, endMs: s.endMs, text: s.text }));
+  subs.forEach((c, i) => {
+    sTrack.clips.push({
+      id: `c_s_${i}`,
+      text: c.text.replace(/\n/g, " ").slice(0, 80),
+      startMs: c.startMs,
+      inMs: 0,
+      outMs: Math.max(500, c.endMs - c.startMs),
+      volume: 1,
+    });
+  });
+  writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(doc, null, 2));
+  writeFileSync(join(directory, "pipeline", "input.srt"), formatSrt(subs), "utf-8");
+
+  ctx.progress(0.9, "搭画布");
+  writeCanvas(projectId, directory, bible, imageEndpointId);
+
+  const t1 = now();
+  db.run("UPDATE pipelines SET status = ?, currentStep = ?, stateJson = ?, updatedAt = ? WHERE id = ?", [
+    "done",
+    "timeline",
+    JSON.stringify({ bible, story, sceneCount: scenes.length, paperAssetId: paper.id }),
+    t1,
+    runId,
+  ]);
+  ctx.progress(1, "纸底片子已上时间线");
+  return {
+    pipelineId: runId,
+    projectId,
+    title: bible.title,
+    sceneCount: scenes.length,
+    clipCount: 1,
+    hasTimeline: true,
+    paperAssetId: paper.id,
+  };
+}

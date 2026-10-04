@@ -2,7 +2,7 @@
 
 三种加法（风格中心「添加风格」）：
 1. 贴 GitHub 技能链接（仓库 / 目录 / SKILL.md），起个名字，转成风格包
-2. 自己形容，让平台写成技能
+2. 自定义风格：描述视觉特征后生成风格包
 3. 上传 SKILL.md / pack.json / zip
 
 也可以手建文件夹 + `pack.json`，或丢到 `~/.video-workbench/stylePacks/`。

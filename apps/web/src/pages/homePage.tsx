@@ -20,7 +20,7 @@ type Intent = "free" | "drama" | "whiteboard" | "remake";
 const intents: Array<{ key: Intent; label: string; hint: string; ready: boolean }> = [
   { key: "free", label: "自由创作", hint: "一句话出图", ready: true },
   { key: "drama", label: "小说转短剧", hint: "上美影风拆成 5 集", ready: true },
-  { key: "whiteboard", label: "白板动画", hint: "M7 上线", ready: false },
+  { key: "whiteboard", label: "白板动画", hint: "贴字幕就能出片", ready: true },
   { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的", ready: true },
 ];
 
@@ -80,8 +80,8 @@ export function HomePage() {
     if (!input || busy) return;
     setError("");
 
-    // 前置检查：说人话的引导
-    if (byCap.image.length === 0) {
+    // 前置检查：说人话的引导。白板只靠项目自带 ffmpeg，不挡在模型后面。
+    if (intent !== "whiteboard" && byCap.image.length === 0) {
       setError("还没有配置图片模型。先到「模型」页添加一个，回来就能出图了。");
       return;
     }
@@ -98,11 +98,11 @@ export function HomePage() {
 
     setBusy(true);
     try {
-      if (intent === "drama") {
+      if (intent === "drama" || intent === "whiteboard") {
         const job = await apiJson<Job>("/api/pipelines/run", "post", {
           story: input,
-          packId: "smy-animation",
-          substyle,
+          packId: intent === "whiteboard" ? "whiteboard" : "smy-animation",
+          substyle: intent === "drama" ? substyle : undefined,
           llmEndpointId: pick("llm") || undefined,
           imageEndpointId: pick("image") || undefined,
         });
@@ -110,8 +110,12 @@ export function HomePage() {
         const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
         if (!result.projectId) throw new Error("没有建出项目");
         setCurrentProject(result.projectId);
-        setPendingAutoRun(true);
-        navigate("/canvas");
+        if (intent === "whiteboard") {
+          navigate("/timeline");
+        } else {
+          setPendingAutoRun(true);
+          navigate("/canvas");
+        }
         return;
       }
 
@@ -162,9 +166,11 @@ export function HomePage() {
             rows={4}
             className="w-full resize-none rounded-t-2xl bg-transparent p-4 text-sm leading-relaxed outline-none placeholder:text-fg-faint"
             placeholder={
-              intent === "drama"
-                ? "粘贴一段小说或故事，按上美影风拆成 5 集…"
-                : "例如：上美影风格的武松打虎，Q 版人物…"
+              intent === "whiteboard"
+                ? "贴一段 SRT，或按行写口播。不用配模型也能出纸底片子。"
+                : intent === "drama"
+                  ? "粘贴一段小说或故事，按上美影风拆成 5 集…"
+                  : "例如：上美影风格的武松打虎，Q 版人物…"
             }
             value={text}
             onChange={(e) => setText(e.target.value)}
