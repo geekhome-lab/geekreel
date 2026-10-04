@@ -91,6 +91,10 @@ function BoardPane(props: { canFetch: boolean }) {
     queryKey: ["radar-sources"],
     queryFn: () => api<RadarSource[]>("/api/radar/sources"),
   });
+  const { data: trend } = useQuery({
+    queryKey: ["radar-trend"],
+    queryFn: () => api<Array<{ date: string; count: number }>>("/api/radar/trend"),
+  });
 
   const platforms = useMemo(() => {
     const set = new Set((sources ?? []).map((s) => s.platform));
@@ -107,6 +111,7 @@ function BoardPane(props: { canFetch: boolean }) {
       if (fail) setError(fail.reason instanceof Error ? fail.reason.message : String(fail.reason));
       qc.invalidateQueries({ queryKey: ["radar-board"] });
       qc.invalidateQueries({ queryKey: ["radar-sources"] });
+      qc.invalidateQueries({ queryKey: ["radar-trend"] });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -155,6 +160,22 @@ function BoardPane(props: { canFetch: boolean }) {
         <span className="ml-auto text-[10px] text-fg-faint">热度 = AI 估计</span>
       </div>
       {error && <div className="mb-3 rounded-lg bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</div>}
+      {trend && trend.length > 0 && (
+        <div className="mb-4 rounded-xl border border-line bg-panel px-3 py-2">
+          <div className="mb-1 text-[10px] text-fg-faint">近两周条数</div>
+          <div className="flex h-16 items-end gap-1">
+            {trend.map((d) => {
+              const max = Math.max(...trend.map((x) => x.count), 1);
+              return (
+                <div key={d.date} className="flex flex-1 flex-col items-center justify-end" title={`${d.date} ${d.count} 条`}>
+                  <div className="w-full rounded-t bg-accent/70" style={{ height: `${Math.max(8, (d.count / max) * 56)}px` }} />
+                  <div className="mt-0.5 text-[8px] text-fg-faint">{d.date.slice(5)}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {items && items.length === 0 && (
         <div className="rounded-xl border border-dashed border-line py-16 text-center text-sm text-fg-faint">

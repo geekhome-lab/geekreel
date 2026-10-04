@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, copyFileSync, linkSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, copyFileSync, linkSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import {
   buildAssetRelPath,
@@ -266,5 +266,14 @@ export function assetStats() {
     )
     .all() as Array<{ month: string; count: number; bytes: number }>;
   const total = db.query("SELECT COUNT(*) AS count FROM assets").get() as { count: number };
-  return { byType, byMonth, total: total.count };
+  const big = db
+    .query("SELECT id, title, type, sizeBytes FROM assets ORDER BY sizeBytes DESC LIMIT 8")
+    .all() as Array<{ id: string; title: string; type: AssetType; sizeBytes: number }>;
+  return { byType, byMonth, total: total.count, big };
+}
+
+export function clearLibraryCache(): { deleted: boolean; path: string } {
+  const path = join(libraryRoot(), ".cache");
+  if (existsSync(path)) rmSync(path, { recursive: true, force: true });
+  return { deleted: true, path };
 }

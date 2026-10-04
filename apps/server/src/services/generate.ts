@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { clipDuration, type TimelineDoc } from "@vw/core";
 import { getAdapter } from "@vw/models";
-import { detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
+import { burnCaption, concatVideos, cropAspect, detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { resolveEndpoint } from "./models";
@@ -185,6 +185,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     durationSec?: number;
     endpointId?: string;
     projectId?: string;
+    imageAssetId?: string;
   };
   if (!payload.prompt?.trim()) throw new Error("缺少提示词");
   ctx.progress(0.05, "找视频模型");
@@ -193,11 +194,21 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.generateVideo) throw new Error("这个模型不会出视频，换一个视频模型");
 
+  let image: { mime: string; data: Uint8Array } | undefined;
+  if (payload.imageAssetId) {
+    const img = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(payload.imageAssetId) as { path: string } | null;
+    if (img) {
+      const bytes = new Uint8Array(readFileSync(absInLibrary(img.path)));
+      image = { mime: "image/png", data: bytes };
+    }
+  }
+
   ctx.progress(0.15, `正在生成 ${endpoint.name}，可能要一两分钟`);
   const result = await adapter.generateVideo(endpoint.config, {
     prompt: payload.prompt,
     durationSec: payload.durationSec || 5,
     signal: ctx.signal,
+    image,
   });
   const ext = result.mime.includes("webm") ? "webm" : "mp4";
   const asset = storeAsset({
@@ -220,8 +231,10 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
 
 export const mediaTranscodeHandler: JobHandler = async (job, ctx) => {
   const payload = JSON.parse(job.payloadJson) as {
-    op?: "extract" | "transcode";
+    op?: "extract" | "transcode" | "crop169" | "crop916" | "concat" | "burn";
     assetId?: string;
+    assetIdB?: string;
+    text?: string;
     atMs?: number;
     projectId?: string;
   };
@@ -251,18 +264,40 @@ export const mediaTranscodeHandler: JobHandler = async (job, ctx) => {
       ctx.progress(1, "抽帧完成");
       return { assetId: asset.id };
     }
-    ctx.progress(0.2, "转码");
     const out = join(tmp, "out.mp4");
-    await transcodeMp4(bins.ffmpeg, input, out, { signal: ctx.signal });
+    let title = `${src.title}-转码`;
+    if (payload.op === "crop169") {
+      ctx.progress(0.2, "裁成 16:9");
+      await cropAspect(bins.ffmpeg, input, out, "16:9", ctx.signal);
+      title = `${src.title}-16比9`;
+    } else if (payload.op === "crop916") {
+      ctx.progress(0.2, "裁成 9:16");
+      await cropAspect(bins.ffmpeg, input, out, "9:16", ctx.signal);
+      title = `${src.title}-竖屏`;
+    } else if (payload.op === "concat") {
+      if (!payload.assetIdB) throw new Error("拼接要再连第二段素材");
+      const b = db.query("SELECT * FROM assets WHERE id = ?").get(payload.assetIdB) as { path: string; title: string } | null;
+      if (!b) throw new Error("第二段素材不存在");
+      ctx.progress(0.2, "拼接两段");
+      await concatVideos(bins.ffmpeg, input, absInLibrary(b.path), out, ctx.signal);
+      title = `${src.title}+${b.title}`;
+    } else if (payload.op === "burn") {
+      ctx.progress(0.2, "烧字幕");
+      await burnCaption(bins.ffmpeg, input, out, payload.text || " ", ctx.signal);
+      title = `${src.title}-字幕`;
+    } else {
+      ctx.progress(0.2, "转码");
+      await transcodeMp4(bins.ffmpeg, input, out, { signal: ctx.signal });
+    }
     const asset = storeAsset({
       type: "video",
-      title: `${src.title}-转码`,
+      title,
       ext: "mp4",
       source: "canvas",
       projectId: payload.projectId ?? job.projectId,
       data: readFileSync(out),
     });
-    ctx.progress(1, "转码完成");
+    ctx.progress(1, "处理完成");
     return { assetId: asset.id };
   } finally {
     try {

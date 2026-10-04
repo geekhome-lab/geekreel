@@ -47,13 +47,14 @@ export interface RadarSub {
   createdAt: number;
 }
 
-export type PushChannelType = "webhook" | "serverchan" | "telegram" | "bark";
+export type PushChannelType = "webhook" | "serverchan" | "telegram" | "bark" | "email";
 
 export const pushChannelLabels: Record<PushChannelType, string> = {
   webhook: "Webhook",
   serverchan: "Server酱",
   telegram: "Telegram",
   bark: "Bark",
+  email: "邮件",
 };
 
 export interface PushChannel {

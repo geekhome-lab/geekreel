@@ -75,6 +75,7 @@ genRoutes.post("/video", async (c) => {
     durationSec?: number;
     endpointId?: string;
     projectId?: string;
+    imageAssetId?: string;
   };
   if (!body.prompt?.trim()) return err(c, "缺少提示词");
   if (!listEndpoints("video").some((e) => e.enabled)) {
@@ -82,7 +83,12 @@ genRoutes.post("/video", async (c) => {
   }
   const job = jobQueue.submit(
     "gen.video",
-    { prompt: body.prompt.trim(), durationSec: body.durationSec, endpointId: body.endpointId },
+    {
+      prompt: body.prompt.trim(),
+      durationSec: body.durationSec,
+      endpointId: body.endpointId,
+      imageAssetId: body.imageAssetId,
+    },
     body.projectId ?? null,
   );
   return ok(c, job);
@@ -90,15 +96,17 @@ genRoutes.post("/video", async (c) => {
 
 genRoutes.post("/ffmpeg", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
-    op?: "extract" | "transcode";
+    op?: "extract" | "transcode" | "crop169" | "crop916" | "concat" | "burn";
     assetId?: string;
+    assetIdB?: string;
+    text?: string;
     atMs?: number;
     projectId?: string;
   };
   if (!body.assetId) return err(c, "先选一段素材");
   const job = jobQueue.submit(
     "media.transcode",
-    { op: body.op ?? "transcode", assetId: body.assetId, atMs: body.atMs },
+    { op: body.op ?? "transcode", assetId: body.assetId, assetIdB: body.assetIdB, text: body.text, atMs: body.atMs },
     body.projectId ?? null,
   );
   return ok(c, job);

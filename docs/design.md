@@ -1,6 +1,6 @@
 # 视频工作台（Video Workbench）设计文档
 
-> 版本：v0.12 · 更新日期：2026-10-04
+> 版本：v0.13 · 更新日期：2026-10-04
 > 概念参考：Toonflow-app（画布/工作区）、Hypit（爆款复刻）、smy-seedance-storyboard（上美影风）、srt-whiteboard-animation（白板动画）。仅借鉴思路，架构与代码自研。
 
 ---
@@ -362,7 +362,7 @@ video_workbench/
 │   ├── models/              # 模型适配器抽象 + 内置适配器（OpenAI兼容/豆包/可灵…）
 │   ├── media/               # ffmpeg 封装：探测/转码/缩略图/抽帧/渲染脚本
 │   ├── pipeline/            # 流水线引擎 + 通用模板（小说转短剧）
-│   ├── radar/               # 雷达：AI 查询源 + 调度 + 打分（接口预留 rss/api 源）
+│   ├── radar/               # 雷达：AI 查询源 + RSS/HTTP API + 调度 + 打分
 │   ├── push/                # 推送渠道插件（Webhook/Server酱/TG/Bark/邮件）
 │   ├── analyze/             # 竞品分析：yt-dlp/抽帧/转写/LLM报告
 │   ├── remake/              # 复刻：模板提炼/变量替换/批量装配
@@ -421,7 +421,7 @@ model_endpoints (id, name, adapterType, capability, baseUrl, apiKeyEnc, model,
 model_usage     (id, endpointId, jobId, quantity, unit, costMicros, createdAt)
 pipelines       (id, projectId, templateId, status, currentStep, stateJson)
 radar_sources   (id, name, kind, queryTemplate, scheduleCron, endpointId?, enabled)
-                -- kind: ai-query(默认) | rss | http-api(预留)
+                -- kind: ai-query(默认) | rss | http-api
 radar_items     (id, sourceId, title, url, heat, heatText, summary, fetchedAt, hash)
 radar_subs      (id, keyword, platformsJson, heatThreshold, quietHoursJson,
                  channelsJson, enabled, createdAt)
@@ -473,7 +473,7 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 | 3 | 项目目录只存项目文件，资产存库内相对路径 | 资产随项目 | 库根目录可换可迁移（相对路径不变，DB 免改） |
 | 4 | 统一异步 Job 模型 | 同步调用 | 视频生成分钟级，必须任务化 |
 | 5 | 模型「适配器×端点」两层，用户自建端点 | 内置固定厂商列表 | 模型自由；新厂商只需加适配器 |
-| 6 | **雷达用 AI 联网查询取热点，不内置爬虫** | MediaCrawler 等爬虫框架 | 零合规风险、零 cookie、零 Python 依赖；代价是热度为估计值（UI 标注），源接口预留扩展口 |
+| 6 | **雷达用 AI 联网查询取热点，不内置爬虫** | MediaCrawler 等爬虫框架 | 零合规风险、零 cookie、零 Python 依赖；代价是热度为估计值（UI 标注）；RSS / HTTP API 已接 |
 | 7 | Python sidecar 只留白板渲染与本地转写 | 更多 sidecar | 依赖隔离、按需启停、优雅降级 |
 | 8 | 复刻用 JSON 槽位模板 + 自有时间线 | 引入 Hypit SVML 体系 | 不照搬；与画布/时间线/任务中心复用最大化 |
 | 9 | **风格包文件制 + 注册制，加风格 = 加目录** | 写死在代码里 | 用户明确的扩展要求；本期只内置 2 个包 |
@@ -502,6 +502,7 @@ settings        (key, valueJson)   -- 含 libraryRoot(资产库根目录)
 | **M12 小说先建档再拆集**（已落地） | 短剧页去掉点选风格；通读出人物档案和事件清单；点卡片对话+参考图重生成 | 做成连载后先看人、看事件，满意再往下走 |
 | **M13 连载中心 / 定妆 / 对比**（已落地） | 侧栏连载页同时盯多部；有图模型时给角色出定妆照；分析页勾两份报告并排对比 | 连载页能接到下一集；档案卡能看到脸；两份爆款能对照钩子和节奏 |
 | **M14 引导式分镜确认**（已落地） | 自由创作先列 3–5 镜再搭画布；无链接复刻同样先列；分析页从首页进来先确认钩子；复刻填变量后再看槽位 | 首页确认后能看到分镜清单，改完再开做；复刻不会直接出片 |
+| **M15 设计补齐**（已落地） | 邮件 SMTP；雷达近两周趋势；图生视频与 ffmpeg 裁切/拼接/烧字幕；分镜卡/注释；资产网格列表/批量/开文件夹/清缓存；环境变量导入模型；分析最多对照 4 份 | 设计里本期要做的能力都能在界面点到。ComfyUI、包市场、时间线滤镜、Python sidecar 仍按远期不做 |
 
 ---
 

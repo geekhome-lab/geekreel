@@ -25,9 +25,15 @@ async function sleep(ms: number, signal?: AbortSignal) {
 }
 
 /** OpenAI / 兼容网关的 /videos 接口。不依赖 Node 模块，网页也能 import 类型包。 */
+function bytesToBase64(data: Uint8Array): string {
+  let s = "";
+  for (const b of data) s += String.fromCharCode(b);
+  return btoa(s);
+}
+
 export async function openaiGenerateVideo(
   config: Record<string, string>,
-  req: { prompt: string; durationSec?: number; signal?: AbortSignal },
+  req: { prompt: string; durationSec?: number; signal?: AbortSignal; image?: { mime: string; data: Uint8Array } },
 ): Promise<VideoGenResult> {
   const headers = {
     "Content-Type": "application/json",
@@ -40,6 +46,9 @@ export async function openaiGenerateVideo(
       model: config.model,
       prompt: req.prompt,
       seconds: String(req.durationSec || 5),
+      ...(req.image
+        ? { image: `data:${req.image.mime || "image/png"};base64,${bytesToBase64(req.image.data)}` }
+        : {}),
     }),
     signal: req.signal ?? null,
   });

@@ -3,7 +3,8 @@ import { iconPlay } from "../../lib/icons";
 import { useCanvasActions } from "./canvasContext";
 
 export type FfmpegNodeData = {
-  op: "extract" | "transcode";
+  op: "extract" | "transcode" | "crop169" | "crop916" | "concat" | "burn";
+  text?: string;
   atMs: number;
   status: "idle" | "running" | "done" | "failed";
   assetId?: string;
@@ -18,6 +19,7 @@ export function FfmpegNode({ id, data, selected }: NodeProps<Node<FfmpegNodeData
   return (
     <div className={`w-64 rounded-xl border bg-panel shadow-lg ${selected ? "border-accent" : "border-line"}`}>
       <Handle type="target" position={Position.Left} id="in" className="!h-3 !w-3 !border-2 !border-ink !bg-sky-400" />
+      <Handle type="target" position={Position.Bottom} id="in2" className="!h-3 !w-3 !border-2 !border-ink !bg-violet-400" />
       <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
         <span className="text-[11px] font-medium text-fg-dim">ffmpeg</span>
         <span className="rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-fg-faint">
@@ -32,7 +34,19 @@ export function FfmpegNode({ id, data, selected }: NodeProps<Node<FfmpegNodeData
         >
           <option value="extract">抽一帧图片</option>
           <option value="transcode">转成预览 mp4</option>
+          <option value="crop169">裁成 16:9</option>
+          <option value="crop916">裁成竖屏 9:16</option>
+          <option value="concat">拼接两段（底下再连一段）</option>
+          <option value="burn">烧一行字幕</option>
         </select>
+        {data.op === "burn" && (
+          <input
+            className="nodrag w-full rounded border border-line bg-panel-2 px-2 py-1 text-[11px]"
+            placeholder="底部字幕"
+            value={data.text ?? ""}
+            onChange={(e) => updateNodeData(id, { text: e.target.value })}
+          />
+        )}
         {data.op === "extract" && (
           <label className="flex items-center gap-2 text-[11px] text-fg-dim">
             第

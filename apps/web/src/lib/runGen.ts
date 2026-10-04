@@ -91,6 +91,7 @@ export async function submitVideoGen(input: {
   durationSec?: number;
   endpointId?: string | null;
   projectId?: string | null;
+  imageAssetId?: string | null;
 }): Promise<Job> {
   return api<Job>("/api/gen/video", {
     method: "POST",
@@ -100,8 +101,10 @@ export async function submitVideoGen(input: {
 }
 
 export async function submitFfmpeg(input: {
-  op: "extract" | "transcode";
+  op: "extract" | "transcode" | "crop169" | "crop916" | "concat" | "burn";
   assetId: string;
+  assetIdB?: string;
+  text?: string;
   atMs?: number;
   projectId?: string | null;
 }): Promise<Job> {

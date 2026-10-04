@@ -5,7 +5,7 @@ import { decrypt, encrypt, maskSecret } from "../lib/crypto";
 import { newId, now } from "../lib/resp";
 import { wsHub } from "../ws";
 
-const SECRET_KEYS = new Set(["sendkey", "botToken", "deviceKey", "url"]);
+const SECRET_KEYS = new Set(["sendkey", "botToken", "deviceKey", "url", "pass"]);
 
 interface ChannelRow {
   id: string;

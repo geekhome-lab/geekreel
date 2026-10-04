@@ -110,7 +110,12 @@ export interface ModelAdapter {
   ): Promise<SpeechResult>;
   generateVideo?(
     config: Record<string, string>,
-    req: { prompt: string; durationSec?: number; signal?: AbortSignal },
+    req: {
+      prompt: string;
+      durationSec?: number;
+      signal?: AbortSignal;
+      image?: { mime: string; data: Uint8Array };
+    },
   ): Promise<VideoGenResult>;
   transcribe?(
     config: Record<string, string>,

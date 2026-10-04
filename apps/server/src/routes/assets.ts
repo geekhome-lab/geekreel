@@ -7,6 +7,7 @@ import { err, ok } from "../lib/resp";
 import {
   absInLibrary,
   assetStats,
+  clearLibraryCache,
   deleteAsset,
   getAsset,
   hydrateAssets,
@@ -43,6 +44,25 @@ assetsRoutes.get("/", (c) => {
 });
 
 assetsRoutes.get("/stats", (c) => ok(c, assetStats()));
+
+assetsRoutes.post("/batch", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { ids?: string[]; action?: string };
+  const ids = (body.ids ?? []).filter(Boolean);
+  if (ids.length === 0) return err(c, "先勾几条");
+  if (body.action !== "delete") return err(c, "现在只能批量删除");
+  let deleted = 0;
+  const blocked: string[] = [];
+  for (const id of ids) {
+    try {
+      if (deleteAsset(id)) deleted += 1;
+    } catch {
+      blocked.push(id);
+    }
+  }
+  return ok(c, { deleted, blocked });
+});
+
+assetsRoutes.post("/cache/clear", (c) => ok(c, clearLibraryCache()));
 
 /** 上传导入（multipart，字段 files 可多文件） */
 assetsRoutes.post("/import", async (c) => {
@@ -143,6 +163,20 @@ assetsRoutes.delete("/:id", (c) => {
   } catch (e) {
     return err(c, e instanceof Error ? e.message : String(e), 409);
   }
+});
+
+assetsRoutes.post("/:id/reveal", (c) => {
+  const asset = getAsset(c.req.param("id"));
+  if (!asset) return err(c, "资产不存在", 404);
+  const abs = absInLibrary(asset.path);
+  if (!existsSync(abs)) return err(c, "文件不存在", 404);
+  const proc =
+    process.platform === "darwin"
+      ? Bun.spawn(["open", "-R", abs])
+      : process.platform === "win32"
+        ? Bun.spawn(["explorer", `/select,${abs}`])
+        : Bun.spawn(["xdg-open", abs]);
+  return ok(c, { opened: true, pid: proc.pid });
 });
 
 /** 取文件：variant = original | thumb | proxy，支持 Range（视频拖动播放） */

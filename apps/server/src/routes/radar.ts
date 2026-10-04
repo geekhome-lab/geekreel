@@ -16,6 +16,7 @@ import {
   hasWebSearchLlm,
   listItems,
   listSources,
+  radarTrend,
   listSubs,
   projectFromItem,
   saveRadarSettings,
@@ -44,6 +45,8 @@ radarRoutes.get("/board", (c) => {
   const q = c.req.query("q") || undefined;
   return ok(c, listItems({ platform, q, limit: 80 }));
 });
+
+radarRoutes.get("/trend", (c) => ok(c, radarTrend(14)));
 
 radarRoutes.get("/items/:id", (c) => {
   const item = getItem(c.req.param("id"));

@@ -38,6 +38,8 @@ export function AssetsPage() {
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [picked, setPicked] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const queryString = useMemo(() => {
@@ -58,7 +60,11 @@ export function AssetsPage() {
   const { data: stats } = useQuery({
     queryKey: ["asset-stats"],
     queryFn: () =>
-      api<{ byType: Array<{ type: AssetType; count: number; bytes: number }>; total: number }>("/api/assets/stats"),
+      api<{
+        byType: Array<{ type: AssetType; count: number; bytes: number }>;
+        total: number;
+        big?: Array<{ id: string; title: string; type: AssetType; sizeBytes: number }>;
+      }>("/api/assets/stats"),
   });
 
   const deleteMutation = useMutation({
@@ -176,7 +182,53 @@ export function AssetsPage() {
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        <div className="ml-auto flex gap-1">
+          <button
+            className={`rounded-lg border px-2.5 py-1.5 text-xs ${view === "grid" ? "border-accent text-accent" : "border-line text-fg-dim"}`}
+            onClick={() => setView("grid")}
+          >
+            网格
+          </button>
+          <button
+            className={`rounded-lg border px-2.5 py-1.5 text-xs ${view === "list" ? "border-accent text-accent" : "border-line text-fg-dim"}`}
+            onClick={() => setView("list")}
+          >
+            列表
+          </button>
+          <button
+            className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-fg-dim"
+            onClick={async () => {
+              await apiJson("/api/assets/cache/clear", "post");
+              queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+            }}
+          >
+            清缓存
+          </button>
+        </div>
       </div>
+      {picked.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 text-xs">
+          <span className="text-fg-faint">已勾 {picked.length} 条</span>
+          <button
+            className="rounded-lg border border-red-900/50 px-2 py-1 text-red-400"
+            onClick={async () => {
+              if (!confirm(`删掉勾上的 ${picked.length} 条？画布还在用的会跳过。`)) return;
+              await apiJson("/api/assets/batch", "post", { ids: picked, action: "delete" });
+              setPicked([]);
+              queryClient.invalidateQueries({ queryKey: ["assets"] });
+              queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+            }}
+          >
+            批量删除
+          </button>
+          <button className="text-fg-faint underline" onClick={() => setPicked([])}>取消勾选</button>
+        </div>
+      )}
+      {stats?.big && stats.big.length > 0 && (
+        <p className="mb-3 text-[10px] text-fg-faint">
+          大文件：{stats.big.slice(0, 3).map((b) => `${b.title} ${formatBytes(b.sizeBytes)}`).join(" · ")}
+        </p>
+      )}
 
       {/* 分组网格 */}
       {groups.length === 0 && (
@@ -191,11 +243,41 @@ export function AssetsPage() {
           <h2 className="mb-3 text-xs font-medium text-fg-faint">
             {month} <span className="ml-1 text-fg-faint/60">({items.length})</span>
           </h2>
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-            {items.map((a) => (
-              <AssetCard key={a.id} asset={a} onClick={() => setPreviewId(a.id)} />
-            ))}
-          </div>
+          {view === "grid" ? (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
+              {items.map((a) => (
+                <div key={a.id} className="relative">
+                  <label className="absolute top-2 left-2 z-10">
+                    <input
+                      type="checkbox"
+                      className="accent-amber-400"
+                      checked={picked.includes(a.id)}
+                      onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
+                    />
+                  </label>
+                  <AssetCard asset={a} onClick={() => setPreviewId(a.id)} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="divide-y divide-line rounded-xl border border-line bg-panel">
+              {items.map((a) => (
+                <div key={a.id} className="flex items-center gap-3 px-3 py-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="accent-amber-400"
+                    checked={picked.includes(a.id)}
+                    onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
+                  />
+                  <button className="min-w-0 flex-1 truncate text-left hover:text-accent" onClick={() => setPreviewId(a.id)}>
+                    {a.title}
+                  </button>
+                  <span className="text-fg-faint">{assetTypeLabels[a.type]}</span>
+                  <span className="text-fg-faint">{formatBytes(a.sizeBytes)}</span>
+                </div>
+              ))}
+            </div>
+          )}
         </section>
       ))}
 
@@ -362,13 +444,21 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
 
         {/* 操作 */}
         <div className="flex justify-between">
-          <a
-            className="rounded-lg border border-line px-4 py-1.5 text-sm text-fg-dim hover:bg-panel-2 hover:text-fg"
-            href={fileUrl("original")}
-            download={asset.name}
-          >
-            下载
-          </a>
+          <div className="flex gap-2">
+            <a
+              className="rounded-lg border border-line px-4 py-1.5 text-sm text-fg-dim hover:bg-panel-2 hover:text-fg"
+              href={fileUrl("original")}
+              download={asset.name}
+            >
+              下载
+            </a>
+            <button
+              className="rounded-lg border border-line px-4 py-1.5 text-sm text-fg-dim hover:text-fg"
+              onClick={() => void apiJson(`/api/assets/${asset.id}/reveal`, "post")}
+            >
+              在文件夹中显示
+            </button>
+          </div>
           <button
             className="flex items-center gap-1.5 rounded-lg border border-red-900/50 px-4 py-1.5 text-sm text-red-400 hover:bg-red-950/40"
             onClick={() => {

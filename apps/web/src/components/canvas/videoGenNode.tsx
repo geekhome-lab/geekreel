@@ -26,8 +26,9 @@ export function VideoGenNode({ id, data, selected }: NodeProps<Node<VideoGenNode
   return (
     <div className={`w-72 rounded-xl border bg-panel shadow-lg ${selected ? "border-accent" : "border-line"}`}>
       <Handle type="target" position={Position.Left} id="prompt" className="!h-3 !w-3 !border-2 !border-ink !bg-accent" />
+      <Handle type="target" position={Position.Top} id="image" className="!h-3 !w-3 !border-2 !border-ink !bg-sky-400" />
       <div className="flex items-center justify-between border-b border-line px-3 py-1.5">
-        <span className="text-[11px] font-medium text-fg-dim">文生视频</span>
+        <span className="text-[11px] font-medium text-fg-dim">文生 / 图生视频</span>
         <span className="rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-fg-faint">
           {data.status === "done" ? "已完成" : data.status === "failed" ? "失败" : running ? "生成中" : "待运行"}
         </span>
@@ -35,7 +36,7 @@ export function VideoGenNode({ id, data, selected }: NodeProps<Node<VideoGenNode
       <div className="space-y-2 p-3">
         <textarea
           className="nodrag h-16 w-full resize-y rounded-lg border border-line bg-panel-2 p-2 text-xs outline-none"
-          placeholder="画面说明（连入文本节点时以文本为准）"
+          placeholder="画面说明。上面可连一张参考图做图生视频。"
           value={data.prompt}
           onChange={(e) => updateNodeData(id, { prompt: e.target.value })}
         />

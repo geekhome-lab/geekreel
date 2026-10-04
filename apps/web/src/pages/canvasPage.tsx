@@ -29,6 +29,8 @@ import { ImageGenNode, type ImageGenNodeData } from "../components/canvas/imageG
 import { VideoGenNode, type VideoGenNodeData } from "../components/canvas/videoGenNode";
 import { TtsNode, type TtsNodeData } from "../components/canvas/ttsNode";
 import { FfmpegNode, type FfmpegNodeData } from "../components/canvas/ffmpegNode";
+import { ShotNode, shotPrompt, type ShotNodeData } from "../components/canvas/shotNode";
+import { NoteNode, type NoteNodeData } from "../components/canvas/noteNode";
 import { AssetPickerModal } from "../components/canvas/assetPickerModal";
 
 const GEN_TYPES = new Set(["imageGenNode", "videoGenNode", "ttsNode", "ffmpegNode"]);
@@ -40,6 +42,8 @@ const nodeTypes = {
   videoGenNode: VideoGenNode,
   ttsNode: TtsNode,
   ffmpegNode: FfmpegNode,
+  shotNode: ShotNode,
+  noteNode: NoteNode,
 };
 
 interface CanvasMeta {
@@ -155,7 +159,7 @@ function CanvasInner(props: { projectId: string }) {
   // ---------------------------------------------------------------------------
 
   const addNode = useCallback(
-    (type: "textNode" | "assetNode" | "imageGenNode" | "videoGenNode" | "ttsNode" | "ffmpegNode") => {
+    (type: "textNode" | "assetNode" | "imageGenNode" | "videoGenNode" | "ttsNode" | "ffmpegNode" | "shotNode" | "noteNode") => {
       const position = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 - 100 });
       const id = newNodeId();
       const dataByType = {
@@ -169,7 +173,9 @@ function CanvasInner(props: { projectId: string }) {
         } satisfies ImageGenNodeData,
         videoGenNode: { prompt: "", durationSec: 5, endpointId: null, status: "idle" } satisfies VideoGenNodeData,
         ttsNode: { text: "", endpointId: null, status: "idle" } satisfies TtsNodeData,
-        ffmpegNode: { op: "extract", atMs: 1000, status: "idle" } satisfies FfmpegNodeData,
+        ffmpegNode: { op: "extract", atMs: 1000, text: "", status: "idle" } satisfies FfmpegNodeData,
+        shotNode: { visual: "", line: "" } satisfies ShotNodeData,
+        noteNode: { text: "" } satisfies NoteNodeData,
       };
       setNodes((ns) => {
         const next = [...ns, { id, type, position, data: dataByType[type] }];
@@ -217,10 +223,13 @@ function CanvasInner(props: { projectId: string }) {
           // prompt：连入的文本节点内容优先，否则用节点自身 prompt
           const currentEdges = getEdges();
           const textInputs = currentEdges
-            .filter((e) => e.target === id && e.targetHandle === "prompt")
+            .filter((e) => e.target === id && (e.targetHandle === "prompt" || !e.targetHandle))
             .map((e) => getNodes().find((n) => n.id === e.source))
-            .filter((n): n is Node<TextNodeData> => n?.type === "textNode")
-            .map((n) => n.data.text.trim())
+            .map((n) => {
+              if (n?.type === "textNode") return (n.data as TextNodeData).text.trim();
+              if (n?.type === "shotNode") return shotPrompt(n.data as ShotNodeData);
+              return "";
+            })
             .filter(Boolean);
           const ownPrompt =
             node.type === "ttsNode"
@@ -237,16 +246,21 @@ function CanvasInner(props: { projectId: string }) {
 
           updateNodeData(id, { status: "running", error: undefined });
           try {
-            const incomingAsset = currentEdges
-              .filter((e) => e.target === id)
-              .map((e) => getNodes().find((n) => n.id === e.source))
-              .map((n) => {
-                if (!n) return "";
-                if (n.type === "assetNode") return (n.data as AssetNodeData).assetId ?? "";
-                const gen = n.data as { assetId?: string };
-                return gen.assetId ?? "";
-              })
-              .find(Boolean);
+            const assetFrom = (handle?: string) =>
+              currentEdges
+                .filter((e) => e.target === id && (!handle || e.targetHandle === handle || (!e.targetHandle && handle === "in")))
+                .map((e) => getNodes().find((n) => n.id === e.source))
+                .map((n) => {
+                  if (!n) return "";
+                  if (n.type === "assetNode") return (n.data as AssetNodeData).assetId ?? "";
+                  const gen = n.data as { assetId?: string };
+                  return gen.assetId ?? "";
+                })
+                .find(Boolean);
+
+            const incomingAsset = assetFrom("in") || assetFrom();
+            const incomingImage = assetFrom("image") || incomingAsset;
+            const incomingB = assetFrom("in2");
 
             let job;
             if (node.type === "videoGenNode") {
@@ -256,6 +270,7 @@ function CanvasInner(props: { projectId: string }) {
                 durationSec: data.durationSec,
                 endpointId: data.endpointId,
                 projectId: props.projectId,
+                imageAssetId: incomingImage || undefined,
               });
             } else if (node.type === "ttsNode") {
               const data = node.data as TtsNodeData;
@@ -270,6 +285,8 @@ function CanvasInner(props: { projectId: string }) {
               job = await submitFfmpeg({
                 op: data.op,
                 assetId: incomingAsset,
+                assetIdB: incomingB || undefined,
+                text: data.text,
                 atMs: data.atMs,
                 projectId: props.projectId,
               });
@@ -397,6 +414,8 @@ function CanvasInner(props: { projectId: string }) {
         {/* 工具栏 */}
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-xl border border-line bg-panel/90 p-1.5 backdrop-blur">
           <ToolbarButton label="文本" onClick={() => addNode("textNode")} />
+          <ToolbarButton label="分镜卡" onClick={() => addNode("shotNode")} />
+          <ToolbarButton label="注释" onClick={() => addNode("noteNode")} />
           <ToolbarButton label="资产" onClick={() => addNode("assetNode")} />
           <ToolbarButton label="文生图" onClick={() => addNode("imageGenNode")} />
           <ToolbarButton label="文生视频" onClick={() => addNode("videoGenNode")} />

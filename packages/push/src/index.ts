@@ -35,6 +35,8 @@ export async function sendPush(
         return await sendTelegram(config, msg);
       case "bark":
         return await sendBark(config, msg);
+      case "email":
+        return await sendEmail(config, msg);
       default:
         return { ok: false, error: `未知渠道类型 ${type}` };
     }
@@ -120,4 +122,51 @@ export const pushFieldSpecs: Record<PushChannelType, Array<{ key: string; label:
     { key: "deviceKey", label: "设备 Key", secret: true, placeholder: "Bark 里复制的 key" },
     { key: "server", label: "服务器（可空）", placeholder: "https://api.day.app" },
   ],
+  email: [
+    { key: "host", label: "SMTP 主机", placeholder: "smtp.qq.com" },
+    { key: "port", label: "端口", placeholder: "465" },
+    { key: "user", label: "账号", placeholder: "you@example.com" },
+    { key: "pass", label: "密码/授权码", secret: true, placeholder: "邮箱授权码" },
+    { key: "from", label: "发件人（可空）", placeholder: "默认用账号" },
+    { key: "to", label: "收件人", placeholder: "me@example.com" },
+  ],
 };
+
+export function buildSmtpMessage(from: string, to: string, msg: PushMessage): string {
+  const subject = msg.title.replace(/[\r\n]+/g, " ").slice(0, 80);
+  const body = [msg.body, msg.url].filter(Boolean).join("\n\n");
+  return [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: =?UTF-8?B?${Buffer.from(subject).toString("base64")}?=`,
+    "MIME-Version: 1.0",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    body,
+    "",
+  ].join("\r\n");
+}
+
+async function sendEmail(config: Record<string, string>, msg: PushMessage): Promise<PushResult> {
+  const host = asText(config.host).trim();
+  const user = asText(config.user).trim();
+  const pass = asText(config.pass).trim();
+  const to = asText(config.to).trim();
+  const from = asText(config.from).trim() || user;
+  const port = Number(config.port) || 465;
+  if (!host || !user || !pass || !to) return { ok: false, error: "邮件要填 SMTP 主机、账号、密码和收件人" };
+  const url = port === 587 ? `smtp://${host}:${port}` : `smtps://${host}:${port}`;
+  const args = [
+    "curl", "-sS", "--max-time", "30",
+    ...(port === 587 ? ["--ssl-reqd"] : []),
+    "--url", url,
+    "--user", `${user}:${pass}`,
+    "--mail-from", from,
+    "--mail-rcpt", to,
+    "-T", "-",
+  ];
+  const proc = Bun.spawn(args, { stdin: new Blob([buildSmtpMessage(from, to, msg)]), stdout: "pipe", stderr: "pipe" });
+  const [errText, exit] = await Promise.all([new Response(proc.stderr).text(), proc.exited]);
+  if (exit !== 0) return { ok: false, error: errText.trim() || `邮件发送失败（${exit}）` };
+  return { ok: true };
+}

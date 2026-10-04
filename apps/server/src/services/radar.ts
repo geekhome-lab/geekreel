@@ -190,6 +190,17 @@ export function listItems(opts: { platform?: string; q?: string; limit?: number 
   return (db.query(sql).all(...params) as ItemRow[]).map(rowToItem);
 }
 
+export function radarTrend(days = 14): Array<{ date: string; count: number }> {
+  const since = Date.now() - Math.max(1, days) * 86400_000;
+  const rows = db
+    .query(
+      `SELECT strftime('%Y-%m-%d', fetchedAt / 1000, 'unixepoch', 'localtime') AS date, COUNT(*) AS count
+       FROM radar_items WHERE fetchedAt >= ? GROUP BY date ORDER BY date ASC`,
+    )
+    .all(since) as Array<{ date: string; count: number }>;
+  return rows;
+}
+
 export function getItem(id: string): RadarItem | null {
   const row = db.query("SELECT * FROM radar_items WHERE id = ?").get(id) as ItemRow | null;
   return row ? rowToItem(row) : null;

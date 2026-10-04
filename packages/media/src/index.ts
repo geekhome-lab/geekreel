@@ -258,6 +258,70 @@ export async function hasSubtitlesFilter(bin: string): Promise<boolean> {
   }
 }
 
+/** 裁成 16:9 或 9:16，居中切 */
+export async function cropAspect(
+  bin: string,
+  input: string,
+  output: string,
+  ratio: "16:9" | "9:16",
+  signal?: AbortSignal,
+) {
+  const vf =
+    ratio === "9:16"
+      ? "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920"
+      : "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080";
+  await runFfmpeg({
+    bin,
+    args: ["-i", input, "-vf", vf, "-c:v", "libx264", "-crf", "23", "-preset", "veryfast", "-an", "-movflags", "+faststart", output],
+    signal,
+  });
+}
+
+/** 两段视频首尾相接 */
+export async function concatVideos(
+  bin: string,
+  a: string,
+  b: string,
+  output: string,
+  signal?: AbortSignal,
+) {
+  await runFfmpeg({
+    bin,
+    args: [
+      "-i", a, "-i", b,
+      "-filter_complex", "[0:v]scale=1280:-2,setsar=1[v0];[1:v]scale=1280:-2,setsar=1[v1];[v0][v1]concat=n=2:v=1:a=0[v]",
+      "-map", "[v]",
+      "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+      "-movflags", "+faststart",
+      output,
+    ],
+    signal,
+  });
+}
+
+/** 把一行字烧成底部字幕 */
+export async function burnCaption(
+  bin: string,
+  input: string,
+  output: string,
+  text: string,
+  signal?: AbortSignal,
+) {
+  const safe = text.replace(/[:\\'[\]%]/g, " ").replace(/\s+/g, " ").trim().slice(0, 40);
+  await runFfmpeg({
+    bin,
+    args: [
+      "-i", input,
+      "-vf", `drawtext=text='${safe || " "}':fontsize=36:fontcolor=white:borderw=2:x=(w-text_w)/2:y=h-80`,
+      "-c:v", "libx264", "-crf", "23", "-preset", "veryfast",
+      "-c:a", "copy",
+      "-movflags", "+faststart",
+      output,
+    ],
+    signal,
+  });
+}
+
 /** 任意素材转成可预览的 mp4（画布 ffmpeg 节点用） */
 export async function transcodeMp4(
   bin: string,

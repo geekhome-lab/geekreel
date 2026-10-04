@@ -5,6 +5,7 @@ import {
   createEndpoint,
   deleteEndpoint,
   getEndpoint,
+  importFromEnv,
   listEndpoints,
   setDefaultEndpoint,
   updateEndpoint,
@@ -30,6 +31,8 @@ modelsRoutes.get("/endpoints", (c) => {
   const capability = c.req.query("capability") as Capability | undefined;
   return ok(c, listEndpoints(capability));
 });
+
+modelsRoutes.post("/import-env", (c) => ok(c, importFromEnv()));
 
 modelsRoutes.post("/endpoints", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {

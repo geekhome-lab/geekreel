@@ -130,7 +130,7 @@ export function AnalyzePage() {
         </label>
 
         <h2 className="mt-6 mb-2 text-xs font-medium text-fg-faint">最近报告</h2>
-        <p className="mb-2 text-[10px] text-fg-faint">勾两份就能并排对比钩子和节奏。</p>
+        <p className="mb-2 text-[10px] text-fg-faint">勾 2 到 4 份就能并排对比钩子和节奏。</p>
         <div className="space-y-1.5">
           {reports?.length === 0 && <p className="text-xs text-fg-faint">还没有报告</p>}
           {reports?.map((r) => (
@@ -145,7 +145,7 @@ export function AnalyzePage() {
                 onChange={() => {
                   setCompareIds((ids) => {
                     if (ids.includes(r.id)) return ids.filter((x) => x !== r.id);
-                    if (ids.length >= 2) return [ids[1]!, r.id];
+                    if (ids.length >= 4) return [...ids.slice(1), r.id];
                     return [...ids, r.id];
                   });
                 }}
@@ -160,7 +160,7 @@ export function AnalyzePage() {
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        {params.get("from") === "home" && report && compareIds.length !== 2 && !remaking && (
+        {params.get("from") === "home" && report && compareIds.length < 2 && !remaking && (
           <div className="mb-4 rounded-xl border border-accent-dim bg-panel p-3 text-xs">
             <div className="mb-1 font-medium text-accent">拆好了，先看一眼</div>
             <p className="text-fg-dim">钩子：{report.report.hook.summary || "—"}</p>
@@ -177,10 +177,9 @@ export function AnalyzePage() {
             </div>
           </div>
         )}
-        {compareIds.length === 2 ? (
+        {compareIds.length >= 2 ? (
           <CompareView
-            left={reports?.find((r) => r.id === compareIds[0]) ?? null}
-            right={reports?.find((r) => r.id === compareIds[1]) ?? null}
+            reports={compareIds.map((id) => reports?.find((r) => r.id === id) ?? null)}
             onRemake={(r) => setRemaking(r)}
             onClose={() => setCompareIds([])}
           />
@@ -213,19 +212,19 @@ export function AnalyzePage() {
 }
 
 function CompareView(props: {
-  left: AnalysisReport | null;
-  right: AnalysisReport | null;
+  reports: Array<AnalysisReport | null>;
   onRemake: (r: AnalysisReport) => void;
   onClose: () => void;
 }) {
+  const cols = props.reports.length >= 3 ? "md:grid-cols-3" : "md:grid-cols-2";
   return (
     <div className="space-y-3 pb-10">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-medium">对比两份报告</h2>
+        <h2 className="text-sm font-medium">对比 {props.reports.filter(Boolean).length} 份报告</h2>
         <button className="text-xs text-fg-faint underline" onClick={props.onClose}>退出对比</button>
       </div>
-      <div className="grid gap-4 md:grid-cols-2">
-        {[props.left, props.right].map((r, i) =>
+      <div className={`grid gap-4 ${cols}`}>
+        {props.reports.map((r, i) =>
           r ? (
             <div key={r.id} className="rounded-xl border border-line bg-panel p-3">
               <CompareColumn report={r} onRemake={() => props.onRemake(r)} />

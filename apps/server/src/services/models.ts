@@ -152,6 +152,38 @@ export function setDefaultEndpoint(id: string): ModelEndpoint | null {
 }
 
 /** 能力路由：优先指定端点，否则用该能力默认端点 */
+export function importFromEnv(): { created: string[]; skipped: string[] } {
+  const key = (process.env.VW_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+  const baseUrl = (process.env.VW_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim();
+  const created: string[] = [];
+  const skipped: string[] = [];
+  if (!key) return { created, skipped: ["环境变量里没有 VW_API_KEY 或 OPENAI_API_KEY"] };
+
+  const specs: Array<{ name: string; capability: Capability; model: string; vision?: boolean }> = [
+    { name: "环境变量 · 文本", capability: "llm", model: process.env.VW_LLM_MODEL || "gpt-4o-mini", vision: true },
+    { name: "环境变量 · 图片", capability: "image", model: process.env.VW_IMAGE_MODEL || "gpt-image-1" },
+    { name: "环境变量 · 视频", capability: "video", model: process.env.VW_VIDEO_MODEL || "sora-2" },
+    { name: "环境变量 · 语音", capability: "tts", model: process.env.VW_TTS_MODEL || "tts-1" },
+  ];
+  for (const spec of specs) {
+    const exists = listEndpoints(spec.capability).some((e) => e.name === spec.name);
+    if (exists) {
+      skipped.push(spec.name);
+      continue;
+    }
+    const ep = createEndpoint({
+      name: spec.name,
+      adapterType: "openai-compatible",
+      capability: spec.capability,
+      config: { baseUrl, apiKey: key, model: spec.model },
+      vision: spec.vision,
+    });
+    if (!listEndpoints(spec.capability).some((e) => e.isDefault)) setDefaultEndpoint(ep.id);
+    created.push(spec.name);
+  }
+  return { created, skipped };
+}
+
 export function resolveEndpoint(capability: Capability, preferredId?: string): ModelEndpoint | null {
   if (preferredId) {
     const ep = getEndpoint(preferredId, true);

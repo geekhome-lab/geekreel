@@ -95,12 +95,28 @@ export function ModelsPage() {
             自己配置文本 / 图片 / 视频 / 语音模型。编辑端点时填单价，下面就能看到花了多少钱。
           </p>
         </div>
-        <button
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:brightness-110"
-          onClick={() => setEditing("new")}
-        >
-          {iconPlus({})} 添加端点
-        </button>
+        <div className="flex gap-2">
+          <button
+            className="rounded-lg border border-line px-3 py-2 text-xs text-fg-dim hover:text-fg"
+            onClick={async () => {
+              const r = await apiJson<{ created: string[]; skipped: string[] }>("/api/models/import-env", "post");
+              invalidate();
+              alert(
+                r.created.length
+                  ? `已从环境变量加上：${r.created.join("、")}`
+                  : r.skipped[0] || "没有可导入的环境变量",
+              );
+            }}
+          >
+            从环境变量导入
+          </button>
+          <button
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:brightness-110"
+            onClick={() => setEditing("new")}
+          >
+            {iconPlus({})} 添加端点
+          </button>
+        </div>
       </div>
 
       {usage && (
