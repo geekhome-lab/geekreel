@@ -3,11 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublicSettings } from "@vw/core";
 import { api } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { iconAnalyze, iconBook, iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconPalette, iconRadar, iconScissors, iconSettings, iconTasks } from "../lib/icons";
+import { iconAnalyze, iconBook, iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconPalette, iconRadar, iconScissors, iconSeries, iconSettings, iconTasks } from "../lib/icons";
 
 const navItems = [
   { to: "/", label: "首页", icon: iconChat },
   { to: "/drama", label: "小说转短剧", icon: iconBook },
+  { to: "/series", label: "连载", icon: iconSeries },
   { to: "/radar", label: "雷达", icon: iconRadar },
   { to: "/analyze", label: "分析", icon: iconAnalyze },
   { to: "/styles", label: "风格", icon: iconPalette },

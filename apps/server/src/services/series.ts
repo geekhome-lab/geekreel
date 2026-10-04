@@ -54,6 +54,19 @@ export function seriesBible(s: Series): DramaBible | null {
   }
 }
 
+export function seriesDetail(id: string): (Series & { bible: DramaBible | null }) | null {
+  const s = getSeries(id);
+  if (!s) return null;
+  return { ...s, bible: seriesBible(s) };
+}
+
+export function deleteSeries(id: string): boolean {
+  const s = getSeries(id);
+  if (!s) return false;
+  db.run("UPDATE projects SET seriesId = NULL, episodeIndex = NULL WHERE seriesId = ?", [id]);
+  return db.run("DELETE FROM series WHERE id = ?", [id]).changes > 0;
+}
+
 export function attachEpisode(seriesId: string, projectId: string, bible: DramaBible | null, paletteJson: string | null) {
   const s = getSeries(seriesId);
   if (!s) throw new Error("这部连载不存在");

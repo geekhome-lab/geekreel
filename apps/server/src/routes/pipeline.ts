@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
-import { advancePipeline, getPipeline, listPipelines, retryPipelineBible } from "../services/pipeline";
+import { advancePipeline, getPipeline, listPipelines, retryPipelineBible, revisePipelineCast } from "../services/pipeline";
 import { loadPack } from "../services/styles";
 import { listEndpoints } from "../services/models";
 
@@ -30,6 +30,9 @@ pipelineRoutes.post("/run", async (c) => {
     checkpoint?: boolean;
   };
   if (!body.story?.trim() && !body.url?.trim()) return err(c, "先上传小说、贴一段正文，或给一个能打开的链接");
+  if (!body.packId && !listEndpoints("llm").some((e) => e.enabled)) {
+    return err(c, "通读全文认人物需要文本模型。请到「模型」页添加一个。", 422);
+  }
   if (body.packId) {
     const pack = loadPack(body.packId);
     if (!pack) return err(c, "没找到这套风格");
@@ -47,9 +50,33 @@ pipelineRoutes.post("/run", async (c) => {
   return ok(c, job);
 });
 
-pipelineRoutes.post("/:id/advance", (c) => {
+pipelineRoutes.post("/:id/advance", async (c) => {
   try {
-    return ok(c, advancePipeline(c.req.param("id")));
+    return ok(c, await advancePipeline(c.req.param("id")));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
+});
+
+pipelineRoutes.post("/:id/revise", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    target?: "character" | "event";
+    targetId?: string;
+    instruction?: string;
+    images?: Array<{ mime: string; dataBase64: string }>;
+  };
+  if (body.target !== "character" && body.target !== "event") return err(c, "请点一个角色或一条事件");
+  if (!body.targetId?.trim()) return err(c, "缺少要改的条目");
+  try {
+    return ok(
+      c,
+      await revisePipelineCast(c.req.param("id"), {
+        target: body.target,
+        targetId: body.targetId.trim(),
+        instruction: body.instruction ?? "",
+        images: body.images,
+      }),
+    );
   } catch (e) {
     return err(c, e instanceof Error ? e.message : String(e), 422);
   }

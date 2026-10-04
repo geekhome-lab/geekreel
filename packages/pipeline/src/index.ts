@@ -62,6 +62,34 @@ function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episo
   const assets = Array.isArray(r.assets) ? r.assets.map(normalizeAsset).filter((a) => a.name) : [];
   let episodes = Array.isArray(r.episodes) ? r.episodes.map(normalizeEpisode) : [];
   episodes = fillToN(episodes, fallbackStory, String(r.title ?? "").trim() || guessTitle(fallbackStory), episodeCount);
+  const cast = Array.isArray(r.cast)
+    ? (r.cast as unknown[]).map((x, i) => {
+        const a = (x ?? {}) as Record<string, unknown>;
+        return {
+          id: String(a.id ?? `C${i + 1}`),
+          name: String(a.name ?? "").trim(),
+          identity: String(a.identity ?? ""),
+          personality: String(a.personality ?? ""),
+          appearance: String(a.appearance ?? ""),
+          outfit: String(a.outfit ?? ""),
+          prompt: String(a.prompt ?? ""),
+          imageAssetId: typeof a.imageAssetId === "string" ? a.imageAssetId : null,
+        };
+      }).filter((c) => c.name)
+    : undefined;
+  const events = Array.isArray(r.events)
+    ? (r.events as unknown[]).map((x, i) => {
+        const e = (x ?? {}) as Record<string, unknown>;
+        return {
+          id: String(e.id ?? `E${i + 1}`),
+          chapter: String(e.chapter ?? ""),
+          index: Number(e.index) || i + 1,
+          title: String(e.title ?? ""),
+          summary: String(e.summary ?? ""),
+          characters: Array.isArray(e.characters) ? e.characters.map((c) => String(c)) : [],
+        };
+      }).filter((e) => e.title || e.summary)
+    : undefined;
   return {
     title: String(r.title ?? "").trim() || guessTitle(fallbackStory),
     packId: null,
@@ -69,6 +97,8 @@ function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episo
     palette,
     assets,
     episodes,
+    cast,
+    events,
   };
 }
 
@@ -175,6 +205,7 @@ export function defaultPalette(): PaletteDoc {
 
 export * from "./whiteboard";
 export * from "./fetchNovel";
+export * from "./cast";
 
 export function guessTitle(story: string): string {
   const line = story.replace(/\s+/g, " ").trim();

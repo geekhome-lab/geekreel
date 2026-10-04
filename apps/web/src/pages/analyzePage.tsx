@@ -19,6 +19,7 @@ export function AnalyzePage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [activeId, setActiveId] = useState<string | null>(params.get("id"));
+  const [compareIds, setCompareIds] = useState<string[]>([]);
   const [remaking, setRemaking] = useState<AnalysisReport | null>(null);
 
   const { data: status } = useQuery({
@@ -129,24 +130,49 @@ export function AnalyzePage() {
         </label>
 
         <h2 className="mt-6 mb-2 text-xs font-medium text-fg-faint">最近报告</h2>
+        <p className="mb-2 text-[10px] text-fg-faint">勾两份就能并排对比钩子和节奏。</p>
         <div className="space-y-1.5">
           {reports?.length === 0 && <p className="text-xs text-fg-faint">还没有报告</p>}
           {reports?.map((r) => (
-            <button
+            <div
               key={r.id}
-              className={`w-full rounded-lg border px-3 py-2 text-left text-xs ${activeId === r.id ? "border-accent bg-panel-2" : "border-line bg-panel hover:border-accent-dim"}`}
-              onClick={() => setActiveId(r.id)}
+              className={`flex items-start gap-2 rounded-lg border px-3 py-2 text-xs ${activeId === r.id ? "border-accent bg-panel-2" : "border-line bg-panel"}`}
             >
-              <div className="truncate font-medium">{r.title}</div>
-              <div className="text-[10px] text-fg-faint">{r.sourceUrl ? "链接" : "资产"} · {r.report.shots.length} 镜</div>
-            </button>
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-amber-400"
+                checked={compareIds.includes(r.id)}
+                onChange={() => {
+                  setCompareIds((ids) => {
+                    if (ids.includes(r.id)) return ids.filter((x) => x !== r.id);
+                    if (ids.length >= 2) return [ids[1]!, r.id];
+                    return [...ids, r.id];
+                  });
+                }}
+              />
+              <button className="min-w-0 flex-1 text-left hover:text-accent" onClick={() => setActiveId(r.id)}>
+                <div className="truncate font-medium">{r.title}</div>
+                <div className="text-[10px] text-fg-faint">{r.sourceUrl ? "链接" : "资产"} · {r.report.shots.length} 镜</div>
+              </button>
+            </div>
           ))}
         </div>
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        {!report && <div className="flex h-full items-center justify-center text-sm text-fg-faint">分析完成的报告会出现在这里</div>}
-        {report && <ReportView report={report} onRemake={() => setRemaking(report)} />}
+        {compareIds.length === 2 ? (
+          <CompareView
+            left={reports?.find((r) => r.id === compareIds[0]) ?? null}
+            right={reports?.find((r) => r.id === compareIds[1]) ?? null}
+            onRemake={(r) => setRemaking(r)}
+            onClose={() => setCompareIds([])}
+          />
+        ) : (
+          <>
+            {!report && <div className="flex h-full items-center justify-center text-sm text-fg-faint">分析完成的报告会出现在这里</div>}
+            {report && <ReportView report={report} onRemake={() => setRemaking(report)} />}
+          </>
+        )}
       </div>
 
       {picking && (
@@ -164,6 +190,64 @@ export function AnalyzePage() {
           report={remaking}
           onClose={() => setRemaking(null)}
         />
+      )}
+    </div>
+  );
+}
+
+function CompareView(props: {
+  left: AnalysisReport | null;
+  right: AnalysisReport | null;
+  onRemake: (r: AnalysisReport) => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="space-y-3 pb-10">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium">对比两份报告</h2>
+        <button className="text-xs text-fg-faint underline" onClick={props.onClose}>退出对比</button>
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {[props.left, props.right].map((r, i) =>
+          r ? (
+            <div key={r.id} className="rounded-xl border border-line bg-panel p-3">
+              <CompareColumn report={r} onRemake={() => props.onRemake(r)} />
+            </div>
+          ) : (
+            <div key={i} className="rounded-xl border border-dashed border-line p-6 text-xs text-fg-faint">还没选这一边</div>
+          ),
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CompareColumn(props: { report: AnalysisReport; onRemake: () => void }) {
+  const { report } = props;
+  const doc = report.report;
+  return (
+    <div className="space-y-3 text-xs">
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="text-sm font-semibold">{report.title}</h3>
+        <button className="shrink-0 text-accent underline" onClick={props.onRemake}>复刻</button>
+      </div>
+      <p><span className="text-fg-faint">钩子 </span>{doc.hook.summary || "—"}</p>
+      <p>
+        <span className="text-fg-faint">节奏 </span>
+        {doc.rhythm.shotCount} 镜 · 均长 {(doc.rhythm.avgShotMs / 1000).toFixed(1)}s
+        {doc.rhythm.wordsPerSec !== null ? ` · ${doc.rhythm.wordsPerSec} 字/秒` : ""}
+      </p>
+      <ul className="space-y-1">
+        {doc.structure.map((s, i) => (
+          <li key={i}>
+            <span className="text-accent">{s.name}</span>
+            <span className="text-fg-faint"> {(s.startMs / 1000).toFixed(1)}–{(s.endMs / 1000).toFixed(1)}s </span>
+            {s.note}
+          </li>
+        ))}
+      </ul>
+      {doc.viralFactors.length > 0 && (
+        <p className="text-fg-dim">爆款：{doc.viralFactors.join("、")}</p>
       )}
     </div>
   );

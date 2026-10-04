@@ -4,6 +4,7 @@ import {
   emptyTimelineDoc,
   formatSrt,
   sanitizeTitle,
+  type CharacterDossier,
   type DramaBible,
   type PipelineRun,
   type SrtCue,
@@ -12,23 +13,32 @@ import { detectBins, paperStill } from "@vw/media";
 import { getAdapter } from "@vw/models";
 import { injectImagePrompt, type LoadedPack } from "@vw/style";
 import {
+  assetsFromCast,
+  bibleFromCastPrompt,
   bibleFromWhiteboard,
+  CAST_REVISE_SYSTEM,
+  CAST_SYSTEM,
+  CAST_TO_BIBLE_SYSTEM,
+  castFromAssets,
   clipNovel,
+  EVENT_REVISE_SYSTEM,
   fetchNovelText,
-  novelContinuePrompt,
-  novelDramaPrompt,
-  NOVEL_CONTINUE_SYSTEM,
-  NOVEL_DRAMA_SYSTEM,
+  novelCastContinuePrompt,
+  novelCastPrompt,
+  parseCastDoc,
   parseDramaBible,
+  parseOneCharacter,
+  parseOneEvent,
+  reviseCharacterPrompt,
+  reviseEventPrompt,
   scenesFromInput,
   stitchEpisodeFrames,
   type WhiteboardScene,
 } from "@vw/pipeline";
-import { paletteLine } from "@vw/style";
 import { db } from "../db";
 import { jobQueue, type JobContext, type JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
-import { libraryRoot, storeAsset } from "./library";
+import { libraryRoot, storeAsset, updateAssetMeta } from "./library";
 import { resolveEndpoint } from "./models";
 import { attachEpisode, createSeries, getSeries, seriesBible } from "./series";
 import { loadPack } from "./styles";
@@ -234,16 +244,15 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
     return { ...result, seriesId, episodeIndex };
   }
 
-  ctx.progress(0.2, continuing ? "写下一集" : "拆 5 集剧本");
+  ctx.progress(0.2, continuing ? "通读新章，抽事件" : "通读全文，认人物");
   const endpoint = resolveEndpoint("llm", payload.llmEndpointId);
-  if (!endpoint) throw new Error("短剧要文本模型来拆集和色盘。到「模型」页加一个。");
+  if (!endpoint) throw new Error("短剧要文本模型来认人物和拆事件。到「模型」页加一个。");
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
   const substyle = payload.substyle || existingSeries?.substyle || pack?.public.defaultSubstyle || null;
-  const packHint = pack
-    ? `风格：${pack.public.name}。子风格：${substyle || "默认"}。色盘要能平涂，不要写光影。`
-    : "通用短剧，画面写清楚主体和动作即可。";
+  const lockedCast = lockedBible?.cast?.length ? lockedBible.cast : lockedBible ? castFromAssets(lockedBible.assets) : [];
+
   let bible: DramaBible;
   try {
     if (continuing && lockedBible && existingSeries) {
@@ -251,73 +260,61 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
         adapter,
         endpoint,
         {
-          system: NOVEL_CONTINUE_SYSTEM,
-          prompt: novelContinuePrompt(story, packHint, {
+          system: CAST_SYSTEM,
+          prompt: novelCastContinuePrompt(story, {
             title: lockedBible.title || existingSeries.name,
-            episodeIndex: existingSeries.episodeCount + 1,
-            lastFrame: lockedBible.episodes.at(-1)?.lastFrame || "",
-            assetsLine: lockedBible.assets.map((a) => `${a.id}${a.name}`).join("、"),
-            paletteLine: paletteLine(lockedBible.palette),
+            castLine: lockedCast.map((c) => `${c.id}${c.name}`).join("、"),
           }),
         },
-        { projectId, jobType: "pipeline.run" },
+        { projectId, jobType: "pipeline.cast" },
       );
-      bible = parseDramaBible(text, story, { episodeCount: 1 });
-      bible.title = lockedBible.title || bible.title;
-      bible.palette = lockedBible.palette.colors.length ? lockedBible.palette : bible.palette;
-      bible.assets = lockedBible.assets.length ? lockedBible.assets : bible.assets;
-      const epNo = existingSeries.episodeCount + 1;
-      bible.episodes = bible.episodes.map((e) => ({ ...e, index: epNo, title: e.title || `第 ${epNo} 集` }));
+      const doc = parseCastDoc(text, story);
+      bible = {
+        title: lockedBible.title || doc.title,
+        packId: lockedBible.packId,
+        substyle: lockedBible.substyle,
+        palette: lockedBible.palette.colors.length ? lockedBible.palette : { note: doc.paletteNote, colors: doc.colors.length ? doc.colors : lockedBible.palette.colors },
+        cast: lockedCast,
+        events: doc.events,
+        assets: assetsFromCast(lockedCast),
+        episodes: [],
+      };
     } else {
       const text = await chatMetered(
         adapter,
         endpoint,
-        {
-          system: pack?.bibleSystem || NOVEL_DRAMA_SYSTEM,
-          prompt: novelDramaPrompt(story, packHint),
-        },
-        { projectId, jobType: "pipeline.run" },
+        { system: CAST_SYSTEM, prompt: novelCastPrompt(story) },
+        { projectId, jobType: "pipeline.cast" },
       );
-      bible = parseDramaBible(text, story);
+      const doc = parseCastDoc(text, story);
+      bible = {
+        title: doc.title,
+        packId: pack?.public.id ?? null,
+        substyle,
+        palette: { note: doc.paletteNote, colors: doc.colors.length ? doc.colors : parseDramaBible("", story).palette.colors },
+        cast: doc.cast,
+        events: doc.events,
+        assets: assetsFromCast(doc.cast),
+        episodes: [],
+      };
     }
   } catch {
-    bible = parseDramaBible("", story, { episodeCount: continuing ? 1 : 5 });
-    if (continuing && lockedBible) {
-      bible.title = lockedBible.title;
-      bible.palette = lockedBible.palette;
-      bible.assets = lockedBible.assets;
-    }
-  }
-
-  bible.packId = pack?.public.id ?? lockedBible?.packId ?? null;
-  bible.substyle = substyle;
-  bible = stitchEpisodeFrames(bible);
-
-  ctx.progress(0.55, "注入风格和色盘");
-  if (pack) {
-    let prevLast: string | null = null;
+    const doc = parseCastDoc("", story);
     bible = {
-      ...bible,
-      episodes: bible.episodes.map((ep) => {
-        const shots = ep.shots.map((shot, i) => ({
-          ...shot,
-          imagePrompt: injectImagePrompt({
-            pack,
-            raw: shot.imagePrompt || shot.visual,
-            palette: bible.palette,
-            substyle,
-            lastFrame: i === 0 ? prevLast : null,
-          }),
-        }));
-        prevLast = ep.lastFrame || shots.at(-1)?.visual || prevLast;
-        return { ...ep, shots };
-      }),
-      assets: bible.assets.map((a) => ({
-        ...a,
-        prompt: injectImagePrompt({ pack, raw: a.prompt || a.name, palette: bible.palette, substyle }),
-      })),
+      title: lockedBible?.title || doc.title,
+      packId: pack?.public.id ?? lockedBible?.packId ?? null,
+      substyle,
+      palette: lockedBible?.palette ?? { note: doc.paletteNote, colors: doc.colors },
+      cast: lockedCast.length ? lockedCast : doc.cast,
+      events: doc.events,
+      assets: assetsFromCast(lockedCast.length ? lockedCast : doc.cast),
+      episodes: [],
     };
   }
+
+  ctx.progress(0.65, "给角色出定妆照");
+  bible.cast = await paintCast(projectId, bible.cast ?? [], payload.imageEndpointId);
+  bible.assets = assetsFromCast(bible.cast);
 
   mkdirSync(join(directory, "pipeline"), { recursive: true });
   writeFileSync(join(directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
@@ -342,27 +339,38 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
   if (payload.checkpoint !== false && !isWhiteboard) {
     db.run("UPDATE pipelines SET status = ?, currentStep = ?, stateJson = ?, updatedAt = ? WHERE id = ?", [
       "waiting",
-      "bible",
+      "cast",
       JSON.stringify({ bible, story, input }),
       now(),
       runId,
     ]);
-    ctx.progress(1, "剧本已拆好，确认后再搭画布");
+    ctx.progress(1, "人物和事件已列好，先看一眼");
     return {
       pipelineId: runId,
       projectId,
       waiting: true,
+      step: "cast",
       title: bible.title,
-      episodeCount: bible.episodes.length,
-      shotCount: bible.episodes.reduce((n, e) => n + e.shots.length, 0),
+      characterCount: bible.cast?.length ?? 0,
+      eventCount: bible.events?.length ?? 0,
     };
   }
 
+  const filled = await fillBibleFromCast({
+    bible,
+    story,
+    projectId,
+    llmEndpointId: payload.llmEndpointId,
+    pack,
+    substyle,
+    continuing,
+    episodeIndex: existingSeries ? existingSeries.episodeCount + 1 : 1,
+  });
   return finishDramaCanvas({
     runId,
     projectId,
     directory,
-    bible,
+    bible: filled,
     story,
     input,
     continuing,
@@ -426,36 +434,244 @@ function finishDramaCanvas(opts: {
   };
 }
 
-export function advancePipeline(id: string): ReturnType<typeof finishDramaCanvas> {
+export async function advancePipeline(id: string): Promise<ReturnType<typeof finishDramaCanvas>> {
   const row = db.query("SELECT * FROM pipelines WHERE id = ?").get(id) as PipeRow | null;
   if (!row) throw new Error("流水线不存在");
   if (row.status !== "waiting") throw new Error("这一步不用确认，已经做完了");
   const project = db.query("SELECT directory FROM projects WHERE id = ?").get(row.projectId) as { directory: string } | null;
   if (!project) throw new Error("项目不存在");
-  let state: { bible?: DramaBible; story?: string; input?: Parameters<typeof finishDramaCanvas>[0]["input"] };
+  let state: { bible?: DramaBible; story?: string; input?: Parameters<typeof finishDramaCanvas>[0]["input"] & { llmEndpointId?: string | null } };
   try {
     state = JSON.parse(row.stateJson) as typeof state;
   } catch {
     throw new Error("流水线状态坏了，请重拆一集");
   }
-  if (!state.bible) throw new Error("还没有剧本");
+  if (!state.bible) throw new Error("还没有人物档案");
+  let bible = state.bible;
+  const input = state.input ?? {
+    packId: row.packId,
+    substyle: state.bible.substyle,
+    seriesId: null,
+    seriesName: null,
+    kind: "drama",
+    imageEndpointId: null,
+    llmEndpointId: null,
+  };
+  if (row.currentStep === "cast" || !bible.episodes.length) {
+    const pack = input.packId ? loadPack(input.packId) : null;
+    const series = input.seriesId ? getSeries(input.seriesId) : null;
+    bible = await fillBibleFromCast({
+      bible,
+      story: state.story ?? "",
+      projectId: row.projectId,
+      llmEndpointId: input.llmEndpointId,
+      pack,
+      substyle: input.substyle,
+      continuing: !!(series && series.episodeCount > 0),
+      episodeIndex: series ? series.episodeCount + 1 : 1,
+    });
+    writeFileSync(join(project.directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
+  }
   return finishDramaCanvas({
     runId: id,
     projectId: row.projectId,
     directory: project.directory,
-    bible: state.bible,
+    bible,
     story: state.story ?? "",
-    input: state.input ?? {
-      packId: row.packId,
-      substyle: state.bible.substyle,
-      seriesId: null,
-      seriesName: null,
-      kind: "drama",
-      imageEndpointId: null,
-    },
-    continuing: false,
-    existingSeriesId: state.input?.seriesId ?? null,
+    input,
+    continuing: !!(input.seriesId && (getSeries(input.seriesId)?.episodeCount ?? 0) > 0),
+    existingSeriesId: input.seriesId ?? null,
   });
+}
+
+function readWaitingState(id: string): {
+  row: PipeRow;
+  bible: DramaBible;
+  story: string;
+  input: Record<string, unknown>;
+} {
+  const row = db.query("SELECT * FROM pipelines WHERE id = ?").get(id) as PipeRow | null;
+  if (!row) throw new Error("流水线不存在");
+  if (row.status !== "waiting") throw new Error("现在不能改，先等这一步列完");
+  let state: { bible?: DramaBible; story?: string; input?: Record<string, unknown> };
+  try {
+    state = JSON.parse(row.stateJson) as typeof state;
+  } catch {
+    throw new Error("流水线状态坏了");
+  }
+  if (!state.bible) throw new Error("还没有人物档案");
+  return { row, bible: state.bible, story: state.story ?? "", input: state.input ?? {} };
+}
+
+function persistBible(row: PipeRow, bible: DramaBible, story: string, input: Record<string, unknown>) {
+  const project = db.query("SELECT directory FROM projects WHERE id = ?").get(row.projectId) as { directory: string } | null;
+  if (project) writeFileSync(join(project.directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
+  db.run("UPDATE pipelines SET stateJson = ?, updatedAt = ? WHERE id = ?", [
+    JSON.stringify({ bible, story, input }),
+    now(),
+    row.id,
+  ]);
+}
+
+export async function revisePipelineCast(
+  id: string,
+  body: {
+    target: "character" | "event";
+    targetId: string;
+    instruction: string;
+    images?: Array<{ mime: string; dataBase64: string }>;
+  },
+): Promise<DramaBible> {
+  const { row, bible, story, input } = readWaitingState(id);
+  const instruction = body.instruction.trim();
+  if (!instruction && !(body.images && body.images.length)) throw new Error("写一句你想怎么改，或丢一张参考图");
+  const endpoint = resolveEndpoint("llm", typeof input.llmEndpointId === "string" ? input.llmEndpointId : undefined);
+  if (!endpoint) throw new Error("还没有文本模型，改角色要靠它");
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.chat) throw new Error("这个模型不会聊天");
+
+  const images = (body.images ?? []).slice(0, 3).map((img) => ({
+    mime: img.mime || "image/jpeg",
+    data: Buffer.from(img.dataBase64.replace(/^data:[^;]+;base64,/, ""), "base64"),
+  }));
+
+  if (body.target === "character") {
+    const cur = (bible.cast ?? []).find((c) => c.id === body.targetId);
+    if (!cur) throw new Error("没找到这个角色");
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: CAST_REVISE_SYSTEM,
+        prompt: reviseCharacterPrompt(cur, instruction, images.length > 0),
+        images,
+      },
+      { projectId: row.projectId, jobType: "pipeline.revise" },
+    );
+    let next = parseOneCharacter(text, cur);
+    const painted = await paintCast(row.projectId, [next], typeof input.imageEndpointId === "string" ? input.imageEndpointId : undefined);
+    next = painted[0] ?? next;
+    bible.cast = (bible.cast ?? []).map((c) => (c.id === cur.id ? next : c));
+    bible.assets = assetsFromCast(bible.cast);
+    persistBible(row, bible, story, input);
+    return bible;
+  }
+
+  const cur = (bible.events ?? []).find((e) => e.id === body.targetId);
+  if (!cur) throw new Error("没找到这条事件");
+  const text = await chatMetered(
+    adapter,
+    endpoint,
+    {
+      system: EVENT_REVISE_SYSTEM,
+      prompt: reviseEventPrompt(cur, instruction || "改写得更清楚"),
+    },
+    { projectId: row.projectId, jobType: "pipeline.revise" },
+  );
+  const next = parseOneEvent(text, cur);
+  bible.events = (bible.events ?? []).map((e) => (e.id === cur.id ? next : e));
+  persistBible(row, bible, story, input);
+  return bible;
+}
+
+async function paintCast(
+  projectId: string,
+  cast: CharacterDossier[],
+  imageEndpointId?: string | null,
+): Promise<CharacterDossier[]> {
+  const endpoint = resolveEndpoint("image", imageEndpointId ?? undefined);
+  if (!endpoint) return cast;
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.generateImage) return cast;
+  const out = [...cast];
+  for (let i = 0; i < Math.min(out.length, 8); i++) {
+    const c = out[i]!;
+    if (c.imageAssetId) continue;
+    try {
+      const result = await adapter.generateImage(endpoint.config, {
+        prompt: `角色设定，半身或全身，白底，正对镜头，无文字，无水印。${c.prompt || c.name}`,
+        size: "1024x1024",
+      });
+      const asset = storeAsset({
+        type: "image",
+        title: `${c.name}定妆`,
+        ext: "png",
+        source: "pipeline",
+        projectId,
+        data: result.data,
+      });
+      updateAssetMeta(asset.id, { kind: "character" });
+      out[i] = { ...c, imageAssetId: asset.id };
+    } catch {
+      /* 没图也能先看档案 */
+    }
+  }
+  return out;
+}
+
+async function fillBibleFromCast(opts: {
+  bible: DramaBible;
+  story: string;
+  projectId: string;
+  llmEndpointId?: string | null;
+  pack: ReturnType<typeof loadPack>;
+  substyle: string | null;
+  continuing: boolean;
+  episodeIndex: number;
+}): Promise<DramaBible> {
+  const endpoint = resolveEndpoint("llm", opts.llmEndpointId ?? undefined);
+  if (!endpoint) throw new Error("往下拆集需要文本模型");
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.chat) throw new Error("这个模型不会聊天");
+  const n = opts.continuing ? 1 : 5;
+  let bible: DramaBible;
+  try {
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: opts.pack?.bibleSystem || CAST_TO_BIBLE_SYSTEM,
+        prompt: bibleFromCastPrompt(opts.story, opts.bible, n),
+      },
+      { projectId: opts.projectId, jobType: "pipeline.bible" },
+    );
+    bible = parseDramaBible(text, opts.story, { episodeCount: n });
+  } catch {
+    bible = parseDramaBible("", opts.story, { episodeCount: n });
+  }
+  bible.title = opts.bible.title || bible.title;
+  bible.palette = opts.bible.palette.colors.length ? opts.bible.palette : bible.palette;
+  bible.cast = opts.bible.cast;
+  bible.events = opts.bible.events;
+  bible.assets = assetsFromCast(opts.bible.cast ?? []) ;
+  if (opts.bible.assets.length && !bible.assets.length) bible.assets = opts.bible.assets;
+  bible.packId = opts.pack?.public.id ?? opts.bible.packId;
+  bible.substyle = opts.substyle;
+  if (opts.continuing) {
+    bible.episodes = bible.episodes.map((e) => ({ ...e, index: opts.episodeIndex, title: e.title || `第 ${opts.episodeIndex} 集` }));
+  }
+  bible = stitchEpisodeFrames(bible);
+  if (opts.pack) {
+    let prevLast: string | null = null;
+    bible = {
+      ...bible,
+      episodes: bible.episodes.map((ep) => {
+        const shots = ep.shots.map((shot, i) => ({
+          ...shot,
+          imagePrompt: injectImagePrompt({
+            pack: opts.pack!,
+            raw: shot.imagePrompt || shot.visual,
+            palette: bible.palette,
+            substyle: opts.substyle,
+            lastFrame: i === 0 ? prevLast : null,
+          }),
+        }));
+        prevLast = ep.lastFrame || shots.at(-1)?.visual || prevLast;
+        return { ...ep, shots };
+      }),
+    };
+  }
+  return bible;
 }
 
 export function retryPipelineBible(id: string) {

@@ -69,6 +69,27 @@ export interface DramaAssetItem {
   prompt: string;
 }
 
+/** 通读全文后的角色档案，不是点选风格包 */
+export interface CharacterDossier {
+  id: string;
+  name: string;
+  identity: string;
+  personality: string;
+  appearance: string;
+  outfit: string;
+  prompt: string;
+  imageAssetId?: string | null;
+}
+
+export interface StoryEvent {
+  id: string;
+  chapter: string;
+  index: number;
+  title: string;
+  summary: string;
+  characters: string[];
+}
+
 export interface DramaShot {
   startSec: number;
   endSec: number;
@@ -93,6 +114,8 @@ export interface DramaBible {
   palette: PaletteDoc;
   assets: DramaAssetItem[];
   episodes: DramaEpisode[];
+  cast?: CharacterDossier[];
+  events?: StoryEvent[];
 }
 
 export interface PipelineRun {

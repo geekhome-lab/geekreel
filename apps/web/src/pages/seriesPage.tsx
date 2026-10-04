@@ -1,0 +1,126 @@
+import { useNavigate } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { DramaBible, Series } from "@vw/core";
+import { api, apiJson } from "../lib/api";
+import { useAppStore } from "../lib/store";
+import { iconPlus, iconTrash } from "../lib/icons";
+
+type SeriesDetail = Series & { bible: DramaBible | null };
+
+export function SeriesPage() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const setCurrentProject = useAppStore((s) => s.setCurrentProject);
+  const { data: list } = useQuery({
+    queryKey: ["series"],
+    queryFn: () => api<Series[]>("/api/series"),
+  });
+
+  const del = useMutation({
+    mutationFn: (id: string) => apiJson(`/api/series/${id}`, "delete"),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["series"] }),
+  });
+
+  return (
+    <div className="mx-auto h-full max-w-4xl overflow-y-auto p-6">
+      <div className="mb-5 flex items-end justify-between">
+        <div>
+          <h1 className="text-lg font-semibold">连载</h1>
+          <p className="mt-0.5 text-xs text-fg-faint">
+            同时进行大约十部也没问题。下一集点「接到这部」，人物档案会锁住。
+          </p>
+        </div>
+        <button
+          className="flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black"
+          onClick={() => navigate("/drama")}
+        >
+          {iconPlus({ width: 12, height: 12 })} 新开一部
+        </button>
+      </div>
+
+      {list?.length === 0 && (
+        <p className="rounded-xl border border-dashed border-line px-4 py-10 text-center text-sm text-fg-faint">
+          还没有连载。去「小说转短剧」上传正文，做成短剧连载。
+        </p>
+      )}
+
+      <div className="space-y-3">
+        {list?.map((s) => (
+          <SeriesCard
+            key={s.id}
+            series={s}
+            onContinue={() => navigate(`/drama?series=${s.id}`)}
+            onOpen={() => {
+              if (!s.lastProjectId) return;
+              setCurrentProject(s.lastProjectId);
+              navigate("/canvas");
+            }}
+            onDelete={() => {
+              if (confirm(`关掉连载「${s.name}」？项目文件还在，只是不再挂在这部下面。`)) del.mutate(s.id);
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SeriesCard(props: {
+  series: Series;
+  onContinue: () => void;
+  onOpen: () => void;
+  onDelete: () => void;
+}) {
+  const { series: s } = props;
+  const { data: detail } = useQuery({
+    queryKey: ["series", s.id],
+    queryFn: () => api<SeriesDetail>(`/api/series/${s.id}`),
+  });
+  const cast = detail?.bible?.cast ?? [];
+  const kindLabel = s.kind === "whiteboard" ? "白板" : s.kind === "free" ? "自由" : "短剧";
+
+  return (
+    <article className="rounded-xl border border-line bg-panel p-4">
+      <div className="flex flex-wrap items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-medium">{s.name}</h2>
+            <span className="rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-fg-faint">{kindLabel}</span>
+            <span className="text-[11px] text-fg-faint">已 {s.episodeCount} 集</span>
+          </div>
+          {cast.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {cast.slice(0, 8).map((c) => (
+                <div key={c.id} className="flex items-center gap-1.5">
+                  {c.imageAssetId ? (
+                    <img src={`/api/assets/${c.imageAssetId}/file?variant=thumb`} alt="" className="h-8 w-8 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-panel-2 text-[10px] text-fg-faint">
+                      {c.name.slice(0, 1)}
+                    </div>
+                  )}
+                  <span className="text-[11px] text-fg-dim">{c.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={props.onContinue}>
+            接到这部，做下一集
+          </button>
+          <button
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim disabled:opacity-40"
+            disabled={!s.lastProjectId}
+            onClick={props.onOpen}
+          >
+            打开上集画布
+          </button>
+          <button className="rounded-lg border border-line px-2 py-1.5 text-fg-faint hover:text-red-400" onClick={props.onDelete}>
+            {iconTrash({ width: 12, height: 12 })}
+          </button>
+        </div>
+      </div>
+    </article>
+  );
+}

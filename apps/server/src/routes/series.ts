@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { SeriesKind } from "@vw/core";
 import { clipNovel, fetchNovelText, looksLikeHttpUrl } from "@vw/pipeline";
 import { err, ok } from "../lib/resp";
-import { createSeries, getSeries, listSeries } from "../services/series";
+import { createSeries, deleteSeries, listSeries, seriesDetail } from "../services/series";
 
 export const seriesRoutes = new Hono();
 
@@ -35,7 +35,12 @@ seriesRoutes.post("/clip", async (c) => {
 });
 
 seriesRoutes.get("/:id", (c) => {
-  const s = getSeries(c.req.param("id"));
+  const s = seriesDetail(c.req.param("id"));
   if (!s) return err(c, "这部连载不存在", 404);
   return ok(c, s);
+});
+
+seriesRoutes.delete("/:id", (c) => {
+  if (!deleteSeries(c.req.param("id"))) return err(c, "这部连载不存在", 404);
+  return ok(c, { deleted: true });
 });
