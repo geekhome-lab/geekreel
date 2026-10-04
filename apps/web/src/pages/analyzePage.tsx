@@ -57,20 +57,34 @@ export function AnalyzePage() {
   };
 
   const autoStarted = useRef(false);
+  const remakeOpened = useRef(false);
   useEffect(() => {
-    const preset = params.get("url");
-    if (preset && status?.hasLlm && !autoStarted.current) {
+    if (!status?.hasLlm || autoStarted.current) return;
+    const presetUrl = params.get("url");
+    const presetAsset = params.get("assetId");
+    if (presetUrl) {
       autoStarted.current = true;
-      void start({ url: preset });
+      void start({ url: presetUrl });
+    } else if (presetAsset) {
+      autoStarted.current = true;
+      void start({ assetId: presetAsset });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status?.hasLlm]);
+
+  useEffect(() => {
+    if (params.get("remake") !== "1" || remakeOpened.current || !report) return;
+    remakeOpened.current = true;
+    setRemaking(report);
+  }, [params, report]);
 
   return (
     <div className="mx-auto flex h-full max-w-6xl gap-6 p-6">
       <div className="w-[340px] shrink-0">
         <h1 className="text-lg font-semibold">竞品分析</h1>
-        <p className="mt-0.5 mb-4 text-xs text-fg-faint">贴一条爆款链接，或从资产库挑视频。拆开结构后，换成你的主题就能开做。</p>
+        <p className="mt-0.5 mb-4 text-xs text-fg-faint">
+          复刻要看画面：能下就下，抽帧拆结构。抖音经常拉不下来，自己保存后导入资产库，点开视频用「复刻爆款视频」。
+        </p>
 
         {!status?.hasLlm && (
           <div className="mb-3 rounded-xl border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
@@ -80,9 +94,6 @@ export function AnalyzePage() {
         )}
         {status?.hasLlm && !status.hasVision && (
           <p className="mb-3 text-[11px] text-fg-faint">当前文本模型不会看图，只能靠转写和抽帧时刻拆结构。到「模型」页勾选「能看图」会更准。</p>
-        )}
-        {!status?.ytdlp && (
-          <p className="mb-3 text-[11px] text-fg-faint">下载器还没打进项目。点分析时会自动补上；也可以先把视频导入资产库。</p>
         )}
 
         <textarea
@@ -105,7 +116,16 @@ export function AnalyzePage() {
             选资产
           </button>
         </div>
-        {error && <div className="mt-2 rounded-lg bg-red-950/30 px-3 py-2 text-xs text-red-300">{error}</div>}
+        {error && (
+          <div className="mt-2 rounded-lg bg-red-950/30 px-3 py-2 text-xs text-red-300">
+            {error}
+            {error.includes("资产库") && (
+              <button className="ml-1 underline" onClick={() => navigate("/assets")}>
+                去导入 →
+              </button>
+            )}
+          </div>
+        )}
 
         <label className="mt-3 block cursor-pointer text-[11px] text-fg-faint underline hover:text-fg">
           导入复刻模板 JSON
@@ -152,7 +172,7 @@ export function AnalyzePage() {
               />
               <button className="min-w-0 flex-1 text-left hover:text-accent" onClick={() => setActiveId(r.id)}>
                 <div className="truncate font-medium">{r.title}</div>
-                <div className="text-[10px] text-fg-faint">{r.sourceUrl ? "链接" : "资产"} · {r.report.shots.length} 镜</div>
+                <div className="text-[10px] text-fg-faint">{r.sourceUrl ? "链接" : r.videoAssetId ? "资产" : "文案"} · {r.report.shots.length} 镜</div>
               </button>
             </div>
           ))}
@@ -308,6 +328,13 @@ function ReportView(props: { report: AnalysisReport; onRemake: () => void }) {
           </button>
         </div>
       </div>
+
+      {report.transcript && (
+        <section className="rounded-xl border border-line bg-panel p-4">
+          <h3 className="mb-1 text-xs font-medium text-fg-faint">原文案</h3>
+          <p className="whitespace-pre-wrap text-sm text-fg-dim">{report.transcript}</p>
+        </section>
+      )}
 
       {report.frames.length > 0 && (
         <div className="flex gap-2 overflow-x-auto">

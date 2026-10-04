@@ -3,11 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Project, Series } from "@vw/core";
 import { api, apiJson } from "../lib/api";
-import { formatDate } from "../lib/format";
+import { formatTime } from "../lib/format";
 import { useAppStore } from "../lib/store";
 import { iconFolder, iconPlus, iconTrash, iconVideo } from "../lib/icons";
+import { confirmDanger } from "../lib/prefs";
 import { Modal } from "../components/modal";
 import { DirPicker } from "../components/dirPicker";
+
+type ProjectsPageData = { items: Project[]; total: number; page: number; pageSize: number; sort: "updated" | "created" };
 
 export function ProjectsPage() {
   const navigate = useNavigate();
@@ -19,11 +22,16 @@ export function ProjectsPage() {
   const [directory, setDirectory] = useState("");
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState("");
+  const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<"updated" | "created">("updated");
 
-  const { data: projects, isLoading } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api<Project[]>("/api/projects"),
+  const { data, isLoading } = useQuery({
+    queryKey: ["projects", page, sort],
+    queryFn: () => api<ProjectsPageData>(`/api/projects?page=${page}&pageSize=12&sort=${sort}`),
   });
+  const projects = data?.items ?? [];
+  const total = data?.total ?? 0;
+  const pages = Math.max(1, Math.ceil(total / (data?.pageSize ?? 12)));
   const { data: seriesList } = useQuery({
     queryKey: ["series"],
     queryFn: () => api<Series[]>("/api/series"),
@@ -45,7 +53,10 @@ export function ProjectsPage() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiJson(`/api/projects/${id}`, "delete"),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["projects"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["projects"] });
+      if (projects.length <= 1 && page > 1) setPage((p) => p - 1);
+    },
   });
 
   return (
@@ -55,12 +66,34 @@ export function ProjectsPage() {
           <h1 className="text-lg font-semibold">项目</h1>
           <p className="mt-0.5 text-xs text-fg-faint">一个项目 = 一个本地目录，画布、流水线与成片都放里面</p>
         </div>
-        <button
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:brightness-110"
-          onClick={() => setCreating(true)}
-        >
-          {iconPlus({})} 新建项目
-        </button>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-line text-xs">
+            <button
+              className={`px-3 py-1.5 ${sort === "updated" ? "bg-panel-2 text-accent" : "text-fg-dim hover:text-fg"}`}
+              onClick={() => {
+                setSort("updated");
+                setPage(1);
+              }}
+            >
+              最近更新
+            </button>
+            <button
+              className={`px-3 py-1.5 ${sort === "created" ? "bg-panel-2 text-accent" : "text-fg-dim hover:text-fg"}`}
+              onClick={() => {
+                setSort("created");
+                setPage(1);
+              }}
+            >
+              最近创建
+            </button>
+          </div>
+          <button
+            className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-black hover:brightness-110"
+            onClick={() => setCreating(true)}
+          >
+            {iconPlus({})} 新建项目
+          </button>
+        </div>
       </div>
 
       {seriesList && seriesList.length > 0 && (
@@ -88,7 +121,7 @@ export function ProjectsPage() {
 
       {isLoading && <div className="text-sm text-fg-faint">加载中…</div>}
 
-      {projects && projects.length === 0 && (
+      {!isLoading && total === 0 && (
         <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-line text-fg-faint">
           <div className="mb-2 opacity-40">{iconVideo({ width: 36, height: 36 })}</div>
           <div className="text-sm">还没有项目，点击右上角「新建项目」开始</div>
@@ -114,7 +147,7 @@ export function ProjectsPage() {
                 className="rounded p-1 text-fg-faint opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
                 title="从列表移除（不删除文件）"
                 onClick={() => {
-                  if (confirm(`移除项目「${p.name}」？磁盘文件保留。`)) deleteMutation.mutate(p.id);
+                  if (confirmDanger(`移除项目「${p.name}」？磁盘文件保留。`)) deleteMutation.mutate(p.id);
                 }}
               >
                 {iconTrash({})}
@@ -125,7 +158,9 @@ export function ProjectsPage() {
               <span className="truncate font-mono" title={p.directory}>{p.directory}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span className="text-[11px] text-fg-faint">{formatDate(p.createdAt)}</span>
+              <span className="text-[11px] text-fg-faint">
+                {sort === "created" ? "创建" : "更新"} {formatTime(sort === "created" ? p.createdAt : p.updatedAt)}
+              </span>
               <button
                 className="rounded-md border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim hover:text-accent"
                 onClick={() => {
@@ -139,6 +174,28 @@ export function ProjectsPage() {
           </div>
         ))}
       </div>
+
+      {pages > 1 && (
+        <div className="mt-4 flex items-center justify-center gap-2 text-xs">
+          <button
+            className="rounded-lg border border-line px-3 py-1 text-fg-dim disabled:opacity-40"
+            disabled={page <= 1}
+            onClick={() => setPage((p) => p - 1)}
+          >
+            上一页
+          </button>
+          <span className="text-fg-faint">
+            {page} / {pages} · 共 {total} 个
+          </span>
+          <button
+            className="rounded-lg border border-line px-3 py-1 text-fg-dim disabled:opacity-40"
+            disabled={page >= pages}
+            onClick={() => setPage((p) => p + 1)}
+          >
+            下一页
+          </button>
+        </div>
+      )}
 
       {creating && (
         <Modal title="新建项目" onClose={() => setCreating(false)}>

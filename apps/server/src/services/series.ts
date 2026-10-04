@@ -24,6 +24,18 @@ export function listSeries(): Series[] {
   return (db.query("SELECT * FROM series ORDER BY updatedAt DESC").all() as SeriesRow[]).map(rowToSeries);
 }
 
+export function listSeriesPage(q: string, page: number, pageSize: number): { items: Series[]; total: number; page: number; pageSize: number } {
+  const needle = q.trim();
+  const where = needle ? "WHERE name LIKE ?" : "";
+  const params = needle ? [`%${needle}%`] : [];
+  const total = (db.query(`SELECT COUNT(*) AS n FROM series ${where}`).get(...params) as { n: number }).n;
+  const offset = Math.max(page - 1, 0) * pageSize;
+  const items = (
+    db.query(`SELECT * FROM series ${where} ORDER BY updatedAt DESC LIMIT ? OFFSET ?`).all(...params, pageSize, offset) as SeriesRow[]
+  ).map(rowToSeries);
+  return { items, total, page, pageSize };
+}
+
 export function getSeries(id: string): Series | null {
   const row = db.query("SELECT * FROM series WHERE id = ?").get(id) as SeriesRow | null;
   return row ? rowToSeries(row) : null;
@@ -65,6 +77,15 @@ export function deleteSeries(id: string): boolean {
   if (!s) return false;
   db.run("UPDATE projects SET seriesId = NULL, episodeIndex = NULL WHERE seriesId = ?", [id]);
   return db.run("DELETE FROM series WHERE id = ?", [id]).changes > 0;
+}
+
+export function ensureProjectSeries(projectId: string, name: string, kind: SeriesKind = "free") {
+  const row = db.query("SELECT seriesId FROM projects WHERE id = ?").get(projectId) as { seriesId: string | null } | null;
+  if (!row) throw new Error("项目不存在");
+  if (row.seriesId) return getSeries(row.seriesId);
+  const series = createSeries({ name: name.trim() || "未命名", kind });
+  attachEpisode(series.id, projectId, null, null);
+  return getSeries(series.id);
 }
 
 export function attachEpisode(seriesId: string, projectId: string, bible: DramaBible | null, paletteJson: string | null) {

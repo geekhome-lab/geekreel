@@ -4,6 +4,10 @@
  * 新厂商接入 = 新增一个适配器文件并在 registry 注册。
  */
 
+import { dashscopeGenerateImage, isDashScope } from "./dashscopeImage";
+import { dashscopeGenerateSpeech, isDashScopeTts } from "./dashscopeTts";
+import { dashscopeGenerateVideo } from "./dashscopeVideo";
+export { wanVideoChunks, snapWanDuration, wanDurationCap } from "./dashscopeVideo";
 import { openaiGenerateVideo } from "./openaiVideo";
 
 export type Capability = "llm" | "image" | "video" | "tts";
@@ -270,6 +274,9 @@ export const openaiCompatible: ModelAdapter = {
   },
 
   async generateImage(config, req) {
+    if (isDashScope(config.baseUrl ?? "")) {
+      return dashscopeGenerateImage(config, req);
+    }
     const body: Record<string, unknown> = {
       model: config.model,
       prompt: req.prompt,
@@ -303,6 +310,7 @@ export const openaiCompatible: ModelAdapter = {
   },
 
   async generateSpeech(config, req) {
+    if (isDashScopeTts(config)) return dashscopeGenerateSpeech(config, req);
     const res = await openaiFetch(config, "/audio/speech", {
       method: "POST",
       body: JSON.stringify({
@@ -352,6 +360,9 @@ export const openaiCompatible: ModelAdapter = {
   },
 
   generateVideo(config, req) {
+    if (isDashScope(config.baseUrl ?? "")) {
+      return dashscopeGenerateVideo(config, req);
+    }
     return openaiGenerateVideo(config, req);
   },
 };
@@ -377,3 +388,9 @@ export function getAdapter(type: string): ModelAdapter | null {
 export function adaptersFor(capability: Capability): ModelAdapter[] {
   return [...registry.values()].filter((a) => a.capabilities.includes(capability));
 }
+
+export * from "./presets";
+export * from "./voices";
+export { fetchChannelPrices, channelPriceHint } from "./fetchPrices";
+export type { ChannelPrices, PriceQuote } from "./prices";
+export { hasAnyPrice, missingUnitPrice } from "./prices";

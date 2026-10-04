@@ -87,6 +87,9 @@ function loadOne(directory: string): LoadedPack | null {
       source,
       originUrl: manifest.originUrl?.trim() || null,
       editable: source === "user",
+      stylePrompt: [readText(directory, files.style ?? "prompts/style-block.md"), readText(directory, files.hard ?? "prompts/hard-constraint.md")]
+        .filter(Boolean)
+        .join("\n"),
     },
   };
 }

@@ -29,6 +29,18 @@ async function publicSettings(): Promise<PublicSettings> {
 
 settingsRoutes.get("/", async (c) => ok(c, await publicSettings()));
 
+settingsRoutes.post("/reveal", (c) => {
+  const root = libraryRoot();
+  if (!existsSync(root)) return err(c, "目录不存在", 404);
+  const proc =
+    process.platform === "darwin"
+      ? Bun.spawn(["open", root])
+      : process.platform === "win32"
+        ? Bun.spawn(["explorer", root])
+        : Bun.spawn(["xdg-open", root]);
+  return ok(c, { opened: true, pid: proc.pid });
+});
+
 settingsRoutes.put("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { libraryRoot?: string };
   const root = body.libraryRoot?.trim();

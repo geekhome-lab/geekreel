@@ -2,9 +2,11 @@ import { expect, test } from "bun:test";
 import {
   assetsFromCast,
   dossierPrompt,
+  parseBibleRevise,
   parseCastDoc,
   parseOneCharacter,
   parseOneEvent,
+  reviseBiblePrompt,
 } from "./cast";
 
 test("parseCastDoc 抽人物和事件", () => {
@@ -64,4 +66,36 @@ test("档案拼出图提示", () => {
   expect(assetsFromCast([{ id: "C01", name: "武松", identity: "", personality: "", appearance: "", outfit: "", prompt: p }])[0]!.kind).toBe(
     "character",
   );
+});
+
+test("整份改写保住 id 和定妆图", () => {
+  const p = reviseBiblePrompt(
+    {
+      title: "Wu Song",
+      palette: { note: "ink", colors: [] },
+      cast: [{ id: "C01", name: "Wu Song", identity: "hero", personality: "", appearance: "", outfit: "", prompt: "", imageAssetId: "img-1" }],
+      events: [{ id: "E01", chapter: "1", index: 1, title: "Tiger", summary: "fights", characters: ["C01"] }],
+    },
+    "全部改成中文",
+  );
+  expect(p).toContain("全部改成中文");
+  expect(p).toContain("C01");
+  const next = parseBibleRevise(
+    '{"title":"武松","cast":[{"id":"C01","name":"武松","identity":"行者","appearance":"豹头","outfit":"青衣"}],"events":[{"id":"E01","chapter":"一","index":1,"title":"打虎","summary":"酒后遇虎","characters":["C01"]}]}',
+    {
+      title: "Wu Song",
+      packId: null,
+      substyle: null,
+      palette: { note: "ink", colors: [] },
+      assets: [],
+      episodes: [],
+      cast: [{ id: "C01", name: "Wu Song", identity: "hero", personality: "", appearance: "", outfit: "", prompt: "", imageAssetId: "img-1" }],
+      events: [{ id: "E01", chapter: "1", index: 1, title: "Tiger", summary: "fights", characters: ["C01"] }],
+    },
+  );
+  expect(next.title).toBe("武松");
+  expect(next.cast?.[0]?.id).toBe("C01");
+  expect(next.cast?.[0]?.name).toBe("武松");
+  expect(next.cast?.[0]?.imageAssetId).toBe("img-1");
+  expect(next.events?.[0]?.title).toBe("打虎");
 });

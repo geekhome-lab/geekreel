@@ -28,10 +28,15 @@ import {
   novelCastPrompt,
   parseCastDoc,
   parseDramaBible,
+  parseBibleRevise,
   parseOneCharacter,
   parseOneEvent,
+  BIBLE_REVISE_SYSTEM,
+  STORY_REWRITE_SYSTEM,
+  reviseBiblePrompt,
   reviseCharacterPrompt,
   reviseEventPrompt,
+  rewriteStoryPrompt,
   scenesFromInput,
   stitchEpisodeFrames,
   type WhiteboardScene,
@@ -538,6 +543,44 @@ function persistBible(row: PipeRow, bible: DramaBible, story: string, input: Rec
     now(),
     row.id,
   ]);
+}
+
+export async function revisePipelineBible(id: string, instruction: string): Promise<DramaBible> {
+  const { row, bible, story, input } = readWaitingState(id);
+  const note = instruction.trim();
+  if (!note) throw new Error("写一句你想怎么改整份，比如：全部改成中文");
+  const endpoint = resolveEndpoint("llm", typeof input.llmEndpointId === "string" ? input.llmEndpointId : undefined);
+  if (!endpoint) throw new Error("还没有文本模型，改整份要靠它");
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.chat) throw new Error("这个模型不会聊天");
+  const text = await chatMetered(
+    adapter,
+    endpoint,
+    { system: BIBLE_REVISE_SYSTEM, prompt: reviseBiblePrompt(bible, note) },
+    { projectId: row.projectId, jobType: "pipeline.revise" },
+  );
+  const next = parseBibleRevise(text, bible);
+  persistBible(row, next, story, input);
+  return next;
+}
+
+export async function rewriteNovelStory(story: string, instruction: string): Promise<{ text: string; clipped: boolean }> {
+  const note = instruction.trim();
+  if (!note) throw new Error("写一句你想怎么改正文，比如：翻成中文");
+  const clipped = clipNovel(story);
+  const endpoint = resolveEndpoint("llm");
+  if (!endpoint) throw new Error("改正文需要文本模型。先到「模型」页加一个。");
+  const adapter = getAdapter(endpoint.adapterType);
+  if (!adapter?.chat) throw new Error("这个模型不会聊天");
+  const text = await chatMetered(
+    adapter,
+    endpoint,
+    { system: STORY_REWRITE_SYSTEM, prompt: rewriteStoryPrompt(clipped.text, note) },
+    { jobType: "pipeline.rewrite-story" },
+  );
+  const out = text.replace(/^```(?:\w+)?\s*|\s*```$/g, "").trim();
+  if (out.length < 20) throw new Error("改完几乎是空的，换一句再说");
+  return clipNovel(out);
 }
 
 export async function revisePipelineCast(

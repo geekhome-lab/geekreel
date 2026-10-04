@@ -1,49 +1,70 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Capability, ModelEndpoint } from "@vw/models";
 import { capabilityLabels } from "@vw/models";
-import type { DramaBible, FreePlan, Project, Series, StylePackPublic } from "@vw/core";
-import type { Job } from "@vw/core";
+import { spokenLine, type Job, type KeyAssetNeed, type Project, type ScriptDoc, type ScriptLine, type ScriptNote, type StylePackPublic } from "@vw/core";
 import { api, apiJson } from "../lib/api";
+import {
+  listHomeWorks,
+  loadHomeDraft,
+  loadShelf,
+  markHomeDone,
+  parkCurrent,
+  removeHomeWork,
+  resumeStep,
+  saveHomeDraft,
+  syncHomeWorks,
+  workStatusLabels,
+  type HomeDraft,
+  type HomeStep,
+} from "../lib/homeDraft";
+import { usePrefs } from "../lib/prefs";
 import { useAppStore } from "../lib/store";
-import { waitForJob } from "../lib/runGen";
+import { submitImageGen, waitForJob } from "../lib/runGen";
 import { iconPlay } from "../lib/icons";
-
-type Intent = "free" | "whiteboard" | "remake";
-type SeriesMode = "new" | "continue" | "none";
-
-const intents: Array<{ key: Intent; label: string; hint: string }> = [
-  { key: "free", label: "自由创作", hint: "一句话出图，一步步确认" },
-  { key: "whiteboard", label: "白板动画", hint: "贴字幕就能出片" },
-  { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的" },
-];
 
 const modelCaps: Capability[] = ["llm", "image", "video", "tts"];
 
-type ChatLine = { role: "bot" | "user"; text: string };
+function sceneSec(sc: { startSec?: number; endSec?: number }): number {
+  const dur = Math.round((sc.endSec ?? 0) - (sc.startSec ?? 0));
+  return dur > 0 ? dur : 8;
+}
+
+function formatClock(sec: number): string {
+  const s = Math.max(0, Math.round(sec));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
 
 export function HomePage() {
   const navigate = useNavigate();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const setPendingAutoRun = useAppStore((s) => s.setPendingAutoRun);
-  const prefSeries = params.get("series") ?? "";
-  const prefKind = params.get("kind");
+  const autoSubtitles = usePrefs((s) => s.autoSubtitles);
+  const patchPrefs = usePrefs((s) => s.patch);
 
-  const [text, setText] = useState("");
-  const [intent, setIntent] = useState<Intent>(prefKind === "whiteboard" ? "whiteboard" : prefKind === "remake" ? "remake" : "free");
-  const [step, setStep] = useState<"write" | "guide">("write");
-  const [guide, setGuide] = useState<"idea" | "series" | "name" | "pick" | "style" | "go" | "plan" | "revise">("idea");
-  const [lines, setLines] = useState<ChatLine[]>([]);
-  const [seriesMode, setSeriesMode] = useState<SeriesMode>(prefSeries ? "continue" : "new");
-  const [seriesName, setSeriesName] = useState("");
-  const [seriesId, setSeriesId] = useState(prefSeries);
-  const [packId, setPackId] = useState("");
-  const [plan, setPlan] = useState<FreePlan | null>(null);
-  const [reviseText, setReviseText] = useState("");
+  const restored = loadHomeDraft();
+  const [step, setStep] = useState<HomeStep>(
+    params.get("return") === "home" && restored ? resumeStep(restored) : "write",
+  );
+  const [idea, setIdea] = useState(restored?.idea ?? "");
+  const [script, setScript] = useState<ScriptDoc | null>(restored?.script ?? null);
+  const [notes, setNotes] = useState<ScriptNote[]>(restored?.notes ?? []);
+  const [packId, setPackId] = useState<string | null>(restored?.packId ?? null);
+  const [packLabel, setPackLabel] = useState(restored?.packLabel ?? "");
+  const [keys, setKeys] = useState<KeyAssetNeed[]>(restored?.keys ?? []);
+  const [projectId, setProjectId] = useState<string | null>(restored?.projectId ?? null);
+  const [pickedLine, setPickedLine] = useState<string | null>(null);
+  const [noteDraft, setNoteDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [keyRev, setKeyRev] = useState<Record<string, number>>({});
+  const [asSeries, setAsSeries] = useState(restored?.asSeries ?? false);
+  const [source, setSource] = useState<HomeDraft["source"]>(restored?.source ?? "home");
+  const [radarPlatform, setRadarPlatform] = useState(restored?.radarPlatform ?? "");
+  const [radarItemId, setRadarItemId] = useState<string | null>(restored?.radarItemId ?? null);
+  const [works, setWorks] = useState<HomeDraft[]>(() => listHomeWorks());
 
   const [pref, setPref] = useState<Record<string, string>>(() => {
     try {
@@ -60,15 +81,6 @@ export function HomePage() {
   const { data: packs } = useQuery({
     queryKey: ["styles"],
     queryFn: () => api<StylePackPublic[]>("/api/styles"),
-  });
-  const { data: seriesList } = useQuery({
-    queryKey: ["series"],
-    queryFn: () => api<Series[]>("/api/series"),
-  });
-  const { data: seriesDetail } = useQuery({
-    queryKey: ["series", seriesId],
-    queryFn: () => api<Series & { bible: DramaBible | null }>(`/api/series/${seriesId}`),
-    enabled: !!seriesId,
   });
 
   const byCap = useMemo(() => {
@@ -89,263 +101,351 @@ export function HomePage() {
     localStorage.setItem("vw.modelPref", JSON.stringify(next));
   };
 
-  const chosenSeries = seriesList?.find((s) => s.id === seriesId) ?? null;
   const readyPacks = (packs ?? []).filter((p) => p.ready);
 
-  const push = (role: ChatLine["role"], msg: string) => setLines((xs) => [...xs, { role, text: msg }]);
+  const persist = (patch: Partial<HomeDraft> & { step?: HomeStep }) => {
+    const draft: HomeDraft = {
+      idea,
+      script,
+      notes,
+      packId,
+      packLabel,
+      keys,
+      projectId,
+      step,
+      asSeries,
+      durationSec: script?.durationSec ?? 0,
+      source,
+      radarItemId,
+      radarPlatform,
+      updatedAt: Date.now(),
+      ...patch,
+    };
+    saveHomeDraft(draft);
+    setWorks(listHomeWorks());
+  };
 
-  const beginGuide = () => {
-    const input = text.trim();
-    if (!input || busy) return;
+  useEffect(() => {
+    if (params.get("return") !== "home") return;
+    const draft = loadHomeDraft();
+    if (!draft?.script) return;
+    setIdea(draft.idea);
+    setScript(draft.script);
+    setNotes(draft.notes);
+    setPackId(draft.packId);
+    setPackLabel(draft.packLabel);
+    setKeys(draft.keys);
+    setProjectId(draft.projectId);
+    setAsSeries(draft.asSeries);
+    setStep(resumeStep(draft));
+    setSource(draft.source);
+    setRadarPlatform(draft.radarPlatform ?? "");
+    setRadarItemId(draft.radarItemId ?? null);
+  }, [params]);
+
+  useEffect(() => {
+    if (params.get("from") !== "radar") return;
+    const draft = loadHomeDraft();
+    if (!draft?.idea) return;
+    setIdea(draft.idea);
+    setScript(draft.script);
+    setNotes(draft.notes);
+    setPackId(draft.packId);
+    setPackLabel(draft.packLabel);
+    setKeys(draft.keys);
+    setProjectId(draft.projectId);
+    setAsSeries(draft.asSeries);
+    setStep("write");
+    setSource("radar");
+    setRadarPlatform(draft.radarPlatform ?? "");
+    setRadarItemId(draft.radarItemId ?? null);
+    setWorks(listHomeWorks());
+  }, [params]);
+
+  useEffect(() => {
+    void Promise.all([
+      api<{ items: Job[] }>("/api/jobs?type=compose.keys&pageSize=40"),
+      api<{ items: Job[] }>("/api/jobs?type=gen.video&status=done&pageSize=40"),
+    ])
+      .then(([keys, videos]) => {
+        syncHomeWorks([...(keys.items ?? []), ...(videos.items ?? [])]);
+        setWorks(listHomeWorks());
+      })
+      .catch(() => {
+        /* 没有旧任务就算了 */
+      });
+  }, []);
+
+  const applyDraft = (draft: HomeDraft) => {
+    saveHomeDraft(draft);
+    setIdea(draft.idea);
+    setScript(draft.script);
+    setNotes(draft.notes);
+    setPackId(draft.packId);
+    setPackLabel(draft.packLabel);
+    setKeys(draft.keys);
+    setProjectId(draft.projectId);
+    setAsSeries(draft.asSeries);
+    setStep(resumeStep(draft));
+    setSource(draft.source);
+    setRadarPlatform(draft.radarPlatform ?? "");
+    setRadarItemId(draft.radarItemId ?? null);
+    setWorks(listHomeWorks());
+    if (draft.step === "shot" && draft.projectId) {
+      setCurrentProject(draft.projectId);
+      navigate("/canvas");
+    }
+  };
+
+  const makeScript = async () => {
+    const story = idea.trim();
+    if (!story || busy) return;
+    if (!pick("llm")) {
+      setError("做剧本需要文本模型。到「模型」页加一个。");
+      return;
+    }
+    setBusy(true);
     setError("");
-    setStep("guide");
-    setGuide("idea");
-    setLines([
-      { role: "user", text: input },
-      {
-        role: "bot",
-        text:
-          intent === "whiteboard"
-            ? "按「白板动画」来做。下面这段当口播/字幕，对吗？"
-            : intent === "remake"
-              ? "按「复刻爆款」来做。我拿这段当参考（链接或说明），对吗？"
-              : "按「自由创作」来做。我把这句话当成这一集的想法，对吗？",
-      },
-    ]);
-  };
-
-  const confirmIdea = () => {
-    push("user", "对，就这段");
-    if (prefSeries || (seriesMode === "continue" && seriesId)) {
-      const sid = seriesId || prefSeries;
-      const s = seriesList?.find((x) => x.id === sid);
-      if (s) {
-        confirmPick(s.id);
-        return;
-      }
+    try {
+      const next = await apiJson<ScriptDoc>("/api/compose/script", "post", {
+        story,
+        packId,
+        styleHint: packId ? undefined : packLabel || undefined,
+        llmEndpointId: pick("llm") || undefined,
+      });
+      setScript(next);
+      setNotes([]);
+      setStep("script");
+      persist({ idea: story, script: next, notes: [], step: "script", durationSec: next.durationSec });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
     }
-    setGuide("series");
-    push("bot", "这是新开一部连载，接到已经在做的一部，还是这次单独做？连载会锁风格和人物，下次能接着拍。");
   };
 
-  const chooseSeries = (mode: SeriesMode) => {
-    setSeriesMode(mode);
-    if (mode === "new") {
-      push("user", "新开一部连载");
-      setGuide("name");
-      push("bot", "给这部起个名字。以后做下一集时，选这部就能沿用人物和风格。");
+  const addNote = () => {
+    if (!pickedLine || !noteDraft.trim()) return;
+    const next = [...notes, { id: `N${Date.now().toString(36)}`, targetId: pickedLine, text: noteDraft.trim() }];
+    setNotes(next);
+    setNoteDraft("");
+    persist({ notes: next });
+  };
+
+  const rewriteScript = async () => {
+    let talk = noteDraft.trim();
+    if (pickedLine && talk) talk = `针对「${lineLabel(pickedLine)}」：${talk}`;
+    if (!script || busy) return;
+    if (!talk && notes.length === 0) return;
+    if (!pick("llm")) {
+      setError("改剧本需要文本模型。到「模型」页加一个。");
       return;
     }
-    if (mode === "continue") {
-      push("user", "接到已有连载");
-      if (!seriesList?.length) {
-        push("bot", "还没有连载。先新开一部，或这次单独做。");
-        return;
-      }
-      setGuide("pick");
-      push("bot", "接到哪一部？");
+    setBusy(true);
+    setError("");
+    try {
+      const next = await apiJson<ScriptDoc>("/api/compose/script/revise", "post", {
+        script,
+        notes,
+        instruction: talk || undefined,
+        llmEndpointId: pick("llm") || undefined,
+      });
+      setScript(next);
+      setNotes([]);
+      setNoteDraft("");
+      setPickedLine(null);
+      persist({ script: next, notes: [], step: "script", durationSec: next.durationSec });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmScript = () => {
+    if (!script) return;
+    if (packLabel) {
+      void pickStyle(packId, packLabel);
       return;
     }
-    push("user", "这次单独做");
-    afterSeries();
+    setStep("style");
+    persist({ step: "style" });
   };
 
-  const afterSeries = () => {
-    if (intent === "free") {
-      setGuide("style");
-      push("bot", "要套一套风格吗？也可以先不套，只出图。");
+  const pickStyle = async (id: string | null, label: string) => {
+    if (busy) return;
+    if (!script) return;
+    if (!pick("image")) {
+      setError("出人物和场景图需要图片模型。到「模型」页加一个。");
       return;
     }
-    setGuide("go");
-    push("bot", summaryLine());
-  };
-
-  const summaryLine = () => {
-    const serial =
-      seriesMode === "new"
-        ? `新连载「${seriesName.trim() || text.trim().slice(0, 12)}」第 1 集`
-        : seriesMode === "continue" && chosenSeries
-          ? `「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集`
-          : "不挂连载";
-    if (intent === "whiteboard") return `确认：白板动画 · ${serial}。开始做纸底片子？`;
-    if (intent === "remake") return `确认：去拆这条参考 · ${serial}。下一步打开分析页。`;
-    const style = packId ? readyPacks.find((p) => p.id === packId)?.name : "不套风格";
-    return `确认：自由创作 · ${serial} · ${style}。按这个开做？`;
-  };
-
-  const confirmName = () => {
-    const name = seriesName.trim() || text.trim().slice(0, 12) || "未命名连载";
-    setSeriesName(name);
-    push("user", name);
-    afterSeries();
-  };
-
-  const confirmPick = (id: string) => {
-    const s = seriesList?.find((x) => x.id === id);
-    if (!s) return;
-    setSeriesId(id);
-    if (s.stylePackId) setPackId(s.stylePackId);
-    push("user", `接到「${s.name}」`);
-    afterSeries();
-  };
-
-  const finishStyle = (id: string) => {
+    useAppStore.getState().setPendingAutoRun(false);
     setPackId(id);
-    const label = id ? `用「${readyPacks.find((p) => p.id === id)?.name}」` : "先不套风格";
-    setLines((xs) => [
-      ...xs,
-      { role: "user", text: label },
-      {
-        role: "bot",
-        text:
-          seriesMode === "new"
-            ? `确认：自由创作 · 新连载「${seriesName.trim() || text.trim().slice(0, 12)}」第 1 集 · ${id ? readyPacks.find((p) => p.id === id)?.name : "不套风格"}。按这个开做？`
-            : seriesMode === "continue" && chosenSeries
-              ? `确认：自由创作 · 「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集 · ${id ? readyPacks.find((p) => p.id === id)?.name : "沿用连载风格"}。按这个开做？`
-              : `确认：自由创作 · 不挂连载 · ${id ? readyPacks.find((p) => p.id === id)?.name : "不套风格"}。按这个开做？`,
-      },
-    ]);
-    setGuide("go");
-  };
-
-  const lockedLine = () => {
-    const cast = seriesDetail?.bible?.cast ?? [];
-    if (seriesMode !== "continue" || !cast.length) return "";
-    return cast.map((c) => `${c.name}${c.appearance ? `（${c.appearance}）` : ""}`).join("、");
-  };
-
-  const draftPlan = async () => {
-    const input = text.trim();
-    if (!input || busy) return;
-    if (intent === "remake" && /^https?:\/\//i.test(input)) {
-      navigate(`/analyze?url=${encodeURIComponent(input)}&from=home`);
-      return;
-    }
-    if (intent === "whiteboard") {
-      await run();
-      return;
-    }
-    setBusy(true);
-    setError("");
-    push("user", "确认，先看分镜");
-    push("bot", "我按这句话列几镜。不对就点那一镜改，或整份重列。");
-    try {
-      const next = await apiJson<FreePlan>("/api/compose/plan", "post", {
-        story: input,
-        mode: intent === "remake" ? "remake" : "free",
-        lockedLine: lockedLine() || undefined,
-        llmEndpointId: pick("llm") || undefined,
-      });
-      setPlan(next);
-      setGuide("plan");
-      push("bot", `${next.title}：${next.summary}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const applyRevise = async () => {
-    if (!plan || busy) return;
-    const instruction = reviseText.trim();
-    if (!instruction) return;
-    setBusy(true);
-    setError("");
-    push("user", instruction);
-    try {
-      const next = await apiJson<FreePlan>("/api/compose/revise", "post", {
-        plan,
-        instruction,
-        llmEndpointId: pick("llm") || undefined,
-      });
-      setPlan(next);
-      setReviseText("");
-      setGuide("plan");
-      push("bot", `改好了。${next.title}：${next.summary}`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const run = async () => {
-    const input = text.trim();
-    if (!input || busy) return;
-    if (intent !== "whiteboard" && byCap.image.length === 0) {
-      setError("还没有配置图片模型。分镜可以先看，出图要到「模型」页加一个。");
-      return;
-    }
+    setPackLabel(label);
     setBusy(true);
     setError("");
     try {
-      if (intent === "remake" && /^https?:\/\//i.test(input)) {
-        navigate(`/analyze?url=${encodeURIComponent(input)}&from=home`);
-        return;
-      }
-
-      const serialPayload = {
-        seriesId: seriesMode === "continue" ? seriesId || undefined : undefined,
-        seriesName: seriesMode === "new" ? seriesName.trim() || input.slice(0, 12) : undefined,
-        kind: intent === "whiteboard" ? ("whiteboard" as const) : ("free" as const),
-      };
-
-      if (intent === "whiteboard") {
-        const job = await apiJson<Job>("/api/pipelines/run", "post", {
-          story: input,
-          packId: "whiteboard",
-          ...serialPayload,
+      let pid = projectId;
+      if (!pid) {
+        const project = await apiJson<Project>("/api/projects/quick", "post", {
+          name: script.title || idea.trim().slice(0, 16) || "未命名",
+          seriesName: asSeries ? script.title || idea.trim().slice(0, 16) || "未命名" : undefined,
+          kind: "free",
+          stylePackId: id || undefined,
         });
-        const done = await waitForJob(job.id, 8 * 60_000);
-        const result = JSON.parse(done.resultJson ?? "{}") as { projectId?: string };
-        if (!result.projectId) throw new Error("没有建出项目");
-        setCurrentProject(result.projectId);
-        navigate("/timeline");
-        return;
+        pid = project.id;
+        setProjectId(pid);
+        setCurrentProject(pid);
+      } else {
+        await apiJson(`/api/projects/${pid}`, "patch", { stylePackId: id });
       }
-
-      const name = input.replace(/\s+/g, " ").slice(0, 16) || "未命名项目";
-      const project = await apiJson<Project>("/api/projects/quick", "post", {
-        name,
-        ...serialPayload,
-        stylePackId: packId || undefined,
+      const job = await apiJson<Job>("/api/compose/keys", "post", {
+        script,
+        packId: id,
+        styleHint: id ? undefined : "AI 自己选一种适合这个故事的画面风格，不要水印",
+        llmEndpointId: pick("llm") || undefined,
+        imageEndpointId: pick("image") || undefined,
+        projectId: pid,
       });
-      setCurrentProject(project.id);
+      const done = await waitForJob(job.id, 20 * 60_000);
+      const result = JSON.parse(done.resultJson ?? "{}") as { keys?: KeyAssetNeed[] };
+      const nextKeys = result.keys ?? [];
+      setKeys(nextKeys);
+      setStep("keys");
+      persist({ packId: id, packLabel: label, keys: nextKeys, projectId: pid, step: "keys" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      const locked = chosenSeries && seriesMode === "continue"
-        ? `这是连载「${chosenSeries.name}」第 ${(chosenSeries.episodeCount || 0) + 1} 集。人物造型、场景和色盘必须和前几集一致。\n\n`
-        : seriesMode === "new"
-          ? `这是连载「${serialPayload.seriesName}」第 1 集。后面几集会沿用这次的人物和场景。\n\n`
-          : "";
-      const canvasList = await api<Array<{ id: string }>>(`/api/canvas/project/${project.id}`);
+  const redoKey = async (slot: KeyAssetNeed, instruction: string) => {
+    if (!projectId || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const job = await submitImageGen({
+        prompt: instruction.trim() ? `${slot.prompt}\n按这个改：${instruction.trim()}` : slot.prompt,
+        size: slot.kind === "character" ? "1024x1536" : "1024x1024",
+        endpointId: pick("image") || null,
+        projectId,
+        replaceAssetId: slot.assetId,
+      });
+      const done = await waitForJob(job.id, 8 * 60_000);
+      const result = JSON.parse(done.resultJson ?? "{}") as { assetId?: string };
+      if (!result.assetId) throw new Error("没换出来");
+      const next = keys.map((k) => (k.id === slot.id ? { ...k, assetId: result.assetId } : k));
+      setKeys(next);
+      setKeyRev((m) => ({ ...m, [slot.id]: Date.now() }));
+      persist({ keys: next, step: "keys" });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const goEditAsset = (slot: KeyAssetNeed) => {
+    if (!slot.assetId) return;
+    persist({ step: "keys" });
+    navigate(`/assets?focus=${encodeURIComponent(slot.assetId)}&return=home&slot=${encodeURIComponent(slot.id)}`);
+  };
+
+  const startCanvas = async () => {
+    if (!script || !projectId || busy) return;
+    if (!pick("video")) {
+      setError("出片需要视频模型。到「模型」页加一个，不要再铺一堆图。");
+      return;
+    }
+    setBusy(true);
+    setError("");
+    try {
+      setCurrentProject(projectId);
+      if (asSeries) {
+        await apiJson(`/api/projects/${projectId}/ensure-series`, "post", {
+          name: script.title || idea.trim().slice(0, 16) || "未命名",
+          kind: "free",
+        });
+      }
+      await apiJson(`/api/projects/${projectId}`, "patch", { stylePackId: packId });
+      await apiJson(`/api/projects/${projectId}/script`, "put", { script });
+      const canvasList = await api<Array<{ id: string }>>(`/api/canvas/project/${projectId}`);
       const canvasId = canvasList[0]!.id;
-      const shots = plan?.shots?.length ? plan.shots : [{ id: "S01", visual: input, line: "", imagePrompt: input }];
-      const nodes = shots.flatMap((shot, i) => [
-        {
-          id: `text_${i}`,
-          type: "textNode",
-          position: { x: 80, y: 80 + i * 220 },
-          data: { text: `${i === 0 ? locked : ""}${shot.visual}${shot.line ? `\n${shot.line}` : ""}` },
-        },
-        {
-          id: `gen_${i}`,
-          type: "imageGenNode",
-          position: { x: 420, y: 60 + i * 220 },
-          data: { prompt: shot.imagePrompt, size: "1024x1024", endpointId: pick("image") || null, status: "idle" },
-        },
-      ]);
-      const edges = shots.map((_, i) => ({
-        id: `e_${i}`,
-        source: `text_${i}`,
-        sourceHandle: "out",
-        target: `gen_${i}`,
-        targetHandle: "prompt",
-        animated: true,
-      }));
+      const pack = (packs ?? []).find((p) => p.id === packId);
+      const styleText = pack?.stylePrompt || (packLabel && packLabel !== "其他风格，AI自由发挥" ? `风格：${packLabel}` : "");
+      const handDrawn = packId === "whiteboard" || /白板|手绘|线稿|示意图/.test(`${packLabel}\n${styleText}`);
+      const faces = keys.filter((k) => k.kind === "character" && k.assetId);
+      const lock = handDrawn
+        ? [
+            "必须是手绘线稿示意图，暖米黄纸底，深灰铅笔线。禁止真人、写实、照片、三维、电影。",
+            "【画面风格，必须遵守】",
+            styleText,
+            "直接按风格文生视频，不要写成真人短剧。画面里不要出现文字。",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : [
+            faces.map((k) => `角色锁定「${k.name}」：必须和定妆同一张脸、同一套衣服。`).join("\n"),
+            styleText ? `【画面风格，必须遵守】\n${styleText}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n");
+      const nodes: unknown[] = [];
+      const edges: unknown[] = [];
+      keys.forEach((k, i) => {
+        if (!k.assetId) return;
+        nodes.push({
+          id: `key_${k.id}`,
+          type: "assetNode",
+          position: { x: 40, y: 40 + i * 180 },
+          data: { assetId: k.assetId },
+        });
+      });
+      const faceId = faces[0] ? `key_${faces[0].id}` : null;
+      script.scenes.forEach((scene, i) => {
+        const line = scene.lines.map((l) => `${l.speaker}：${l.text}`).join("\n");
+        const spoken = spokenLine(scene);
+        const prompt = [
+          lock,
+          `${formatClock(scene.startSec)}–${formatClock(scene.endSec)}（${sceneSec(scene)}秒）`,
+          scene.action || scene.heading,
+          line,
+        ]
+          .filter(Boolean)
+          .join("\n");
+        const textId = `t_${i}`;
+        const genId = `g_${i}`;
+        nodes.push(
+          { id: textId, type: "textNode", position: { x: 360, y: 40 + i * 260 }, data: { text: prompt } },
+          {
+            id: genId,
+            type: "videoGenNode",
+            position: { x: 700, y: 20 + i * 260 },
+            data: {
+              prompt: "",
+              durationSec: sceneSec(scene),
+              endpointId: pick("video") || null,
+              status: "idle",
+              line: spoken,
+            },
+          },
+        );
+        edges.push({ id: `e_${i}`, source: textId, sourceHandle: "out", target: genId, targetHandle: "prompt", animated: true });
+        // 手绘包必须走文生视频。图生会锁死参考图长相，Skill 就失效了。
+        if (!handDrawn && faceId) {
+          edges.push({ id: `e_ref_${i}`, source: faceId, target: genId, targetHandle: "image" });
+        }
+      });
       await apiJson(`/api/canvas/${canvasId}`, "put", {
         doc: { version: 1, nodes, edges, viewport: null },
       });
+      persist({ step: "shot", projectId });
+      const done = loadHomeDraft();
+      if (done) markHomeDone({ ...done, step: "shot", projectId });
+      parkCurrent();
+      sessionStorage.setItem("vw.autoDub", projectId);
+      sessionStorage.setItem("vw.autoRun", projectId);
       setPendingAutoRun(true);
       navigate("/canvas");
     } catch (e) {
@@ -355,17 +455,59 @@ export function HomePage() {
   };
 
   const reset = () => {
+    persist({ step });
+    parkCurrent();
     setStep("write");
-    setGuide("idea");
-    setLines([]);
-    setSeriesMode("new");
-    setSeriesName("");
-    setSeriesId("");
-    setPackId("");
-    setPlan(null);
-    setReviseText("");
+    setScript(null);
+    setNotes([]);
+    setPackId(null);
+    setPackLabel("");
+    setKeys([]);
+    setProjectId(null);
+    setPickedLine(null);
+    setNoteDraft("");
     setBusy(false);
     setError("");
+    setAsSeries(false);
+    setIdea("");
+    setSource("home");
+    setRadarPlatform("");
+    setRadarItemId(null);
+    setWorks(listHomeWorks());
+  };
+
+  const dropRadar = () => {
+    const cur = loadHomeDraft();
+    const itemId = cur?.radarItemId;
+    const ideaText = (cur?.idea ?? idea).trim();
+    if (cur?.source === "radar") removeHomeWork(cur);
+    for (const w of [...listHomeWorks(), ...loadShelf()]) {
+      if (itemId && w.radarItemId === itemId) removeHomeWork(w);
+      else if (w.source === "radar" && ideaText && w.idea.trim() === ideaText) removeHomeWork(w);
+    }
+    setSource("home");
+    setRadarPlatform("");
+    setRadarItemId(null);
+    setIdea("");
+    persist({
+      idea: "",
+      source: "home",
+      radarItemId: null,
+      radarPlatform: "",
+      step: "write",
+    });
+    if (params.get("from") === "radar") setParams({}, { replace: true });
+    setWorks(listHomeWorks());
+  };
+
+  const workKeySafe = (d: HomeDraft) => d.projectId || d.script?.title || d.idea || String(d.updatedAt);
+
+  const lineLabel = (id: string) => {
+    for (const sc of script?.scenes ?? []) {
+      const line = sc.lines.find((l) => l.id === id);
+      if (line) return `${line.speaker}：${line.text}`;
+    }
+    return id;
   };
 
   return (
@@ -374,55 +516,241 @@ export function HomePage() {
         <div className="mb-8 text-center">
           <h1 className="text-2xl font-semibold tracking-wide">想做什么视频？</h1>
           <p className="mt-2 text-sm text-fg-faint">
-            写一句想法，我一步步问你确认。小说转短剧在左边单独一栏。
+            先选风格再出剧本。剧情上会标时间，你之后能改；时长写在想法里也行。
           </p>
+          <ol className="mt-4 flex flex-wrap justify-center gap-1.5 text-[11px]">
+            {(
+              [
+                ["write", "1 想法"],
+                ["script", "2 剧本"],
+                ["style", "3 风格"],
+                ["keys", "4 定妆"],
+                ["shoot", "5 出片"],
+              ] as const
+            ).map(([id, label]) => {
+              const order = ["write", "script", "style", "keys", "shoot"] as const;
+              const here = { write: 0, script: 1, style: 2, keys: 3, shot: 4 }[step];
+              const idx = order.indexOf(id);
+              const on = idx === here;
+              const done = idx < here;
+              return (
+                <li
+                  key={id}
+                  className={`rounded-full px-2.5 py-1 ${
+                    on ? "bg-accent text-black" : done ? "bg-accent/15 text-accent" : "bg-panel-2 text-fg-faint"
+                  }`}
+                >
+                  {label}
+                </li>
+              );
+            })}
+          </ol>
         </div>
+
+        {step === "write" && works.length > 0 && (
+          <div className="mb-5 rounded-2xl border border-line bg-panel p-3">
+            <div className="mb-2 text-[11px] text-fg-faint">没做完的还能接着做</div>
+            <div className="flex flex-wrap gap-1.5">
+              {works.map((w) => {
+                const title = w.script?.title || w.idea || "未命名";
+                return (
+                  <span key={workKeySafe(w)} className="flex items-center gap-1 rounded-full border border-line bg-panel-2 pl-2.5 pr-1 py-1">
+                    <button className="text-[11px] text-fg" onClick={() => applyDraft(w)}>
+                      {title.slice(0, 16)}
+                      <span className="ml-1 text-fg-faint">{workStatusLabels[w.step]}</span>
+                    </button>
+                    <button
+                      className="rounded-full px-1 text-[10px] text-fg-faint hover:text-red-400"
+                      title="从待办去掉"
+                      onClick={() => {
+                        removeHomeWork(w);
+                        setWorks(listHomeWorks());
+                      }}
+                    >
+                      ×
+                    </button>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div className="rounded-2xl border border-line bg-panel shadow-xl">
           {step === "write" && (
-            <textarea
-              autoFocus
-              rows={4}
-              className="w-full resize-none rounded-t-2xl bg-transparent p-4 text-sm leading-relaxed outline-none placeholder:text-fg-faint"
-              placeholder={
-                intent === "whiteboard"
-                  ? "贴一段 SRT，或按行写口播。"
-                  : intent === "remake"
-                    ? "贴一条爆款链接，或写你想复刻的点。"
-                    : "例如：武松在景阳冈打虎，Q 版人物…"
-              }
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) beginGuide();
-              }}
-            />
+            <div className="space-y-3 p-4">
+              {source === "radar" && (
+                <div className="flex items-center justify-between gap-2 text-[11px] text-fg-faint">
+                  <span>来自{radarPlatform || "雷达"}热点</span>
+                  <button type="button" className="text-fg-dim underline-offset-2 hover:text-fg hover:underline" onClick={dropRadar}>
+                    不用这条
+                  </button>
+                </div>
+              )}
+              <textarea
+                autoFocus
+                rows={4}
+                className="w-full resize-none bg-transparent text-sm leading-relaxed outline-none placeholder:text-fg-faint"
+                placeholder="例如：武松打虎。想卡多长、几场，写在这句话里就行"
+                value={idea}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setIdea(next);
+                  if (source === "radar" && !next.trim()) dropRadar();
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void makeScript();
+                }}
+              />
+              <div>
+                <p className="mb-1.5 text-xs text-fg-faint">先选风格，后面出的文案和画面都按它来</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {readyPacks.map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      className={`rounded-full border px-3 py-1 text-xs ${
+                        packId === p.id ? "border-accent bg-accent/15 text-accent" : "border-line text-fg-dim hover:text-fg"
+                      }`}
+                      onClick={() => {
+                        setPackId(p.id);
+                        setPackLabel(p.name);
+                        persist({ packId: p.id, packLabel: p.name, step: "write" });
+                      }}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    className={`rounded-full border px-3 py-1 text-xs ${
+                      packLabel === "其他风格，AI自由发挥" ? "border-accent bg-accent/15 text-accent" : "border-line text-fg-dim hover:text-fg"
+                    }`}
+                    onClick={() => {
+                      setPackId(null);
+                      setPackLabel("其他风格，AI自由发挥");
+                      persist({ packId: null, packLabel: "其他风格，AI自由发挥", step: "write" });
+                    }}
+                  >
+                    其他
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
 
-          {step === "guide" && (
-            <div className="max-h-80 space-y-3 overflow-y-auto p-4">
-              {lines.filter((l) => l.text).map((l, i) => (
-                <div key={i} className={l.role === "user" ? "text-right" : "text-left"}>
-                  <div
-                    className={`inline-block max-w-[90%] rounded-2xl px-3 py-2 text-sm ${
-                      l.role === "user" ? "bg-accent text-black" : "bg-panel-2 text-fg"
-                    }`}
-                  >
-                    {l.text}
+          {step === "script" && script && (
+            <div className="max-h-[70vh] space-y-4 overflow-y-auto p-4">
+              <div>
+                <div className="text-sm font-medium">{script.title}</div>
+                <p className="mt-1 text-xs text-fg-dim">
+                  {script.durationSec ? `剧情约 ${script.durationSec} 秒` : ""}
+                  {packLabel ? `${script.durationSec ? " · " : ""}${packLabel}` : ""}
+                  {script.logline ? ` · ${script.logline}` : ""}
+                </p>
+              </div>
+              {script.scenes.map((sc) => (
+                <section key={sc.id} className="rounded-xl border border-line bg-panel-2 p-3">
+                  <div className="text-[11px] text-fg-faint">
+                    {formatClock(sc.startSec)}–{formatClock(sc.endSec)} · {sceneSec(sc)}秒 · {sc.heading}
                   </div>
-                </div>
+                  {sc.action ? <p className="mt-1 text-xs text-fg-dim">{sc.action}</p> : null}
+                  <ul className="mt-2 space-y-1">
+                    {sc.lines.map((line) => (
+                      <ScriptLineRow
+                        key={line.id}
+                        line={line}
+                        active={pickedLine === line.id}
+                        marked={notes.some((n) => n.targetId === line.id)}
+                        onPick={() => setPickedLine(line.id === pickedLine ? null : line.id)}
+                      />
+                    ))}
+                  </ul>
+                </section>
               ))}
-              {plan && (guide === "plan" || guide === "revise") && (
-                <ol className="space-y-1.5">
-                  {plan.shots.map((s, i) => (
-                    <li key={s.id} className="rounded-xl border border-line bg-panel-2 px-3 py-2 text-xs">
-                      <div className="text-[10px] text-fg-faint">第 {i + 1} 镜</div>
-                      <div className="text-sm text-fg">{s.visual || s.imagePrompt}</div>
-                      {s.line && <div className="text-fg-dim">台词：{s.line}</div>}
-                    </li>
+              {notes.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {notes.map((n) => (
+                    <button
+                      key={n.id}
+                      className="rounded-full border border-amber-900/50 bg-amber-950/30 px-2.5 py-1 text-[11px] text-amber-200"
+                      onClick={() => {
+                        const next = notes.filter((x) => x.id !== n.id);
+                        setNotes(next);
+                        persist({ notes: next });
+                      }}
+                      title="点掉这条批注"
+                    >
+                      {lineLabel(n.targetId).slice(0, 16)} · {n.text}
+                    </button>
                   ))}
-                </ol>
+                </div>
               )}
+            </div>
+          )}
+
+          {step === "style" && (
+            <div className="space-y-3 p-4">
+              <p className="text-sm text-fg">剧本过了。用哪套画面？</p>
+              <ol className="space-y-2">
+                {readyPacks.map((p, i) => (
+                  <li key={p.id}>
+                    <button
+                      className="flex w-full items-start gap-3 rounded-xl border border-line px-3 py-2 text-left hover:border-accent-dim"
+                      disabled={busy}
+                      onClick={() => void pickStyle(p.id, p.name)}
+                    >
+                      <span className="text-sm text-fg-faint">{i + 1}.</span>
+                      <span>
+                        <span className="text-sm">{p.name}</span>
+                        <span className="mt-0.5 block text-[11px] text-fg-faint">{p.summary}</span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+                <li>
+                  <button
+                    className="flex w-full items-start gap-3 rounded-xl border border-dashed border-line px-3 py-2 text-left hover:border-accent-dim"
+                    disabled={busy}
+                    onClick={() => void pickStyle(null, "其他风格，AI自由发挥")}
+                  >
+                    <span className="text-sm text-fg-faint">{readyPacks.length + 1}.</span>
+                    <span>
+                      <span className="text-sm">其他风格，AI自由发挥</span>
+                      <span className="mt-0.5 block text-[11px] text-fg-faint">不套现成包，让模型自己选一种适合这个故事的画法</span>
+                    </span>
+                  </button>
+                </li>
+              </ol>
+            </div>
+          )}
+
+          {step === "keys" && (
+            <div className="max-h-[28rem] space-y-3 overflow-y-auto p-4">
+              <p className="text-sm text-fg">
+                {packLabel || "定妆"}。
+                {packId === "whiteboard" || /白板|手绘|线稿/.test(packLabel)
+                  ? "手绘白板出的是线稿示意图，不是写实定妆。出片按风格文生视频，不会拿这张图去图生。"
+                  : "这些是人物和场景锁，用来出片，不是要你留下一堆图。脸对了就点下面出片。"}
+                出完会装字幕。配音到时间线里选音色、试听再铺。
+              </p>
+              {!pick("tts") ? (
+                <p className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+                  还没有语音模型。可以先出片加字幕，配音到「模型」页加一家再在时间线里选音色。
+                </p>
+              ) : null}
+              <div className="grid grid-cols-2 gap-2">
+                {keys.map((k) => (
+                  <KeyCard
+                    key={k.id}
+                    item={k}
+                    bust={keyRev[k.id]}
+                    busy={busy}
+                    onEdit={() => goEditAsset(k)}
+                    onRedo={(msg) => void redoKey(k, msg)}
+                  />
+                ))}
+              </div>
             </div>
           )}
 
@@ -433,160 +761,131 @@ export function HomePage() {
           </div>
 
           {step === "write" && (
-            <div className="flex items-center gap-2 border-t border-line px-4 py-3">
-              <div className="flex flex-wrap gap-1.5">
-                {intents.map((it) => (
-                  <button
-                    key={it.key}
-                    title={it.hint}
-                    className={`rounded-full px-3 py-1 text-xs transition-colors ${
-                      intent === it.key ? "bg-accent text-black" : "border border-line text-fg-dim hover:text-fg"
-                    }`}
-                    onClick={() => setIntent(it.key)}
-                  >
-                    {it.label}
-                  </button>
-                ))}
-              </div>
+            <div className="flex flex-wrap items-center gap-3 border-t border-line px-4 py-3">
+              <label className="flex items-center gap-2 text-xs text-fg-dim">
+                <input
+                  type="checkbox"
+                  className="accent-amber-400"
+                  checked={asSeries}
+                  onChange={(e) => {
+                    setAsSeries(e.target.checked);
+                    persist({ asSeries: e.target.checked });
+                  }}
+                />
+                做成连载（进连载菜单，按第01集、第02集收）
+              </label>
               <button
                 className="ml-auto flex items-center gap-1.5 rounded-xl bg-accent px-5 py-2 text-sm font-medium text-black disabled:opacity-40"
-                disabled={!text.trim()}
-                onClick={beginGuide}
+                disabled={!idea.trim() || !packLabel || busy}
+                onClick={() => void makeScript()}
               >
                 {iconPlay({ width: 14, height: 14 })}
-                下一步
+                {busy ? "正在写剧本…" : packLabel ? "按风格出剧本" : "先选风格再出剧本"}
               </button>
             </div>
           )}
 
-          {step === "guide" && (
+          {step === "script" && (
             <div className="space-y-2 border-t border-line px-4 py-3">
-              {guide === "idea" && (
-                <div className="flex gap-2">
-                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={confirmIdea}>
-                    对，就这段
+              <textarea
+                rows={2}
+                className="w-full resize-none rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none placeholder:text-fg-faint"
+                placeholder={
+                  pickedLine
+                    ? `改「${lineLabel(pickedLine).slice(0, 18)}」，或整段压成 10 秒`
+                    : "比如：压成 10 秒、少两场、旁白再狠一点。点台词也能一起改。"
+                }
+                value={noteDraft}
+                onChange={(e) => setNoteDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    e.preventDefault();
+                    void rewriteScript();
+                  }
+                }}
+              />
+              {pickedLine && (
+                <div className="flex items-center gap-2 text-[11px] text-fg-faint">
+                  <span>已点「{lineLabel(pickedLine).slice(0, 24)}」</span>
+                  <button className="underline hover:text-fg" onClick={addNote} disabled={!noteDraft.trim()}>
+                    先记下再改
                   </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={reset}>
-                    我改一下
-                  </button>
-                </div>
-              )}
-              {guide === "series" && (
-                <div className="flex flex-wrap gap-2">
-                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={() => chooseSeries("new")}>
-                    新开连载
-                  </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => chooseSeries("continue")}>
-                    接到已有连载
-                  </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => chooseSeries("none")}>
-                    这次单独做
-                  </button>
-                </div>
-              )}
-              {guide === "name" && (
-                <div className="flex gap-2">
-                  <input
-                    autoFocus
-                    className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-sm outline-none"
-                    placeholder="连载名字，例如：景阳冈"
-                    value={seriesName}
-                    onChange={(e) => setSeriesName(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && confirmName()}
-                  />
-                  <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={confirmName}>
-                    就叫这个
-                  </button>
-                </div>
-              )}
-              {guide === "pick" && (
-                <div className="flex flex-wrap gap-1.5">
-                  {seriesList?.map((s) => (
-                    <button
-                      key={s.id}
-                      className="rounded-full border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim"
-                      onClick={() => confirmPick(s.id)}
-                    >
-                      {s.name} · 已 {s.episodeCount} 集
-                    </button>
-                  ))}
-                </div>
-              )}
-              {guide === "style" && (
-                <div className="flex flex-wrap gap-1.5">
-                  <button className="rounded-full border border-line px-3 py-1 text-xs" onClick={() => finishStyle("")}>
-                    先不套
-                  </button>
-                  {readyPacks.map((p) => (
-                    <button
-                      key={p.id}
-                      className="rounded-full border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim"
-                      onClick={() => finishStyle(p.id)}
-                    >
-                      {p.name}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {guide === "go" && (
-                <div className="flex gap-2">
-                  <button
-                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
-                    disabled={busy}
-                    onClick={() => void draftPlan()}
-                  >
-                    {iconPlay({ width: 14, height: 14 })}
-                    {busy ? "列分镜…" : intent === "whiteboard" ? "确认，开始" : intent === "remake" && /^https?:\/\//i.test(text.trim()) ? "确认，去拆" : "确认，先看分镜"}
-                  </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={reset}>
-                    重来
-                  </button>
-                </div>
-              )}
-              {guide === "plan" && (
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
-                    disabled={busy}
-                    onClick={() => void run()}
-                  >
-                    {iconPlay({ width: 14, height: 14 })}
-                    {busy ? "搭画布…" : "就这样，开做"}
-                  </button>
-                  <button
-                    className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim"
-                    disabled={busy}
-                    onClick={() => setGuide("revise")}
-                  >
-                    我改一下
-                  </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-faint" onClick={reset}>
-                    重来
-                  </button>
-                </div>
-              )}
-              {guide === "revise" && (
-                <div className="flex gap-2">
-                  <input
-                    autoFocus
-                    className="flex-1 rounded-lg border border-line bg-panel-2 px-3 py-1.5 text-sm outline-none"
-                    placeholder="例如：第一镜改成夜景，钩子再狠一点"
-                    value={reviseText}
-                    onChange={(e) => setReviseText(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void applyRevise()}
-                  />
-                  <button
-                    className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40"
-                    disabled={busy || !reviseText.trim()}
-                    onClick={() => void applyRevise()}
-                  >
-                    {busy ? "在改…" : "按这个重列"}
-                  </button>
-                  <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => setGuide("plan")}>
+                  <button className="underline hover:text-fg" onClick={() => setPickedLine(null)}>
                     取消
                   </button>
                 </div>
               )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim disabled:opacity-40"
+                  disabled={busy || (!noteDraft.trim() && notes.length === 0)}
+                  onClick={() => void rewriteScript()}
+                >
+                  {busy ? "按你的话在改…" : "按这句话改"}
+                </button>
+                <button
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+                  disabled={busy}
+                  onClick={confirmScript}
+                >
+                  确认剧本
+                </button>
+                <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-faint" onClick={reset}>
+                  重来
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === "style" && (
+            <div className="flex gap-2 border-t border-line px-4 py-3">
+              <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => setStep("script")}>
+                回剧本
+              </button>
+              <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-faint" onClick={reset}>
+                重来
+              </button>
+              {busy ? <span className="ml-auto text-xs text-fg-faint">在出人物和场景…</span> : null}
+            </div>
+          )}
+
+          {step === "keys" && (
+            <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
+              <label className="flex items-center gap-2 text-xs text-fg-dim">
+                <input
+                  type="checkbox"
+                  className="accent-amber-400"
+                  checked={asSeries}
+                  onChange={(e) => {
+                    setAsSeries(e.target.checked);
+                    persist({ asSeries: e.target.checked, step: "keys" });
+                  }}
+                />
+                做成连载
+              </label>
+              <label className="mr-auto flex items-center gap-2 text-xs text-fg-dim">
+                <input
+                  type="checkbox"
+                  className="accent-amber-400"
+                  checked={autoSubtitles}
+                  onChange={(e) => patchPrefs({ autoSubtitles: e.target.checked })}
+                />
+                配字幕
+              </label>
+              <button
+                className="flex items-center gap-1.5 rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+                disabled={busy || keys.length === 0}
+                onClick={() => void startCanvas()}
+              >
+                {iconPlay({ width: 14, height: 14 })}
+                {busy ? "在搭出片画布…" : "确认定妆，开始出片"}
+              </button>
+              <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={() => setStep("style")}>
+                换风格
+              </button>
+              <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-faint" onClick={reset}>
+                重来
+              </button>
             </div>
           )}
         </div>
@@ -601,14 +900,100 @@ export function HomePage() {
         )}
 
         <p className="mt-4 text-center text-[11px] text-fg-faint">
-          <button className="underline hover:text-fg" onClick={() => navigate("/drama")}>小说转短剧</button>
+          <button className="underline hover:text-fg" onClick={() => navigate("/drama")}>
+            小说转短剧
+          </button>
           {" · "}
-          <button className="underline hover:text-fg" onClick={() => navigate("/radar")}>看看今天热点</button>
+          <button className="underline hover:text-fg" onClick={() => navigate("/radar")}>
+            看看今天热点
+          </button>
           {" · "}
-          <button className="underline hover:text-fg" onClick={() => navigate("/styles")}>风格中心</button>
+          <button className="underline hover:text-fg" onClick={() => navigate("/styles")}>
+            风格中心
+          </button>
         </p>
       </div>
     </div>
+  );
+}
+
+function ScriptLineRow(props: {
+  line: ScriptLine;
+  active: boolean;
+  marked: boolean;
+  onPick: () => void;
+}) {
+  return (
+    <li>
+      <button
+        type="button"
+        className={`w-full rounded-lg px-2 py-1.5 text-left text-sm ${
+          props.active ? "bg-accent/15 text-fg" : props.marked ? "bg-amber-950/40 text-amber-100" : "hover:bg-panel text-fg"
+        }`}
+        onClick={props.onPick}
+      >
+        <span className="mr-2 text-[11px] text-fg-faint">{props.line.speaker}</span>
+        {props.line.text}
+      </button>
+    </li>
+  );
+}
+
+function KeyCard(props: {
+  item: KeyAssetNeed;
+  bust?: number;
+  busy: boolean;
+  onEdit: () => void;
+  onRedo: (instruction: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState("");
+  const k = props.item;
+  return (
+    <article className="rounded-xl border border-line bg-panel-2 p-2">
+      <div className="flex aspect-[3/4] items-center justify-center overflow-hidden rounded-lg bg-black/30">
+        {k.assetId ? (
+          <img
+            src={`/api/assets/${k.assetId}/file?variant=original&v=${props.bust ?? 0}`}
+            alt={k.name}
+            className="h-full w-full object-cover"
+          />
+        ) : (
+          <span className="text-[11px] text-fg-faint">还没有图</span>
+        )}
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-1">
+        <div>
+          <div className="text-xs font-medium">{k.name}</div>
+          <div className="text-[10px] text-fg-faint">{k.kind === "character" ? "人物" : "场景"}</div>
+        </div>
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-1">
+        <button className="rounded-md border border-line px-2 py-0.5 text-[10px] text-fg-dim" disabled={!k.assetId} onClick={props.onEdit}>
+          去资产库改
+        </button>
+        <button className="rounded-md border border-line px-2 py-0.5 text-[10px] text-fg-dim" disabled={props.busy} onClick={() => setOpen((v) => !v)}>
+          换一张
+        </button>
+      </div>
+      {open && (
+        <div className="mt-1.5 flex gap-1">
+          <input
+            className="min-w-0 flex-1 rounded-md border border-line bg-panel px-2 py-1 text-[11px] outline-none"
+            placeholder="例如：脸再凶一点"
+            value={msg}
+            onChange={(e) => setMsg(e.target.value)}
+          />
+          <button
+            className="rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-black disabled:opacity-40"
+            disabled={props.busy}
+            onClick={() => props.onRedo(msg)}
+          >
+            出
+          </button>
+        </div>
+      )}
+    </article>
   );
 }
 
@@ -634,7 +1019,9 @@ function ModelPick(props: {
       {capabilityLabels[props.cap]}
       <select className="max-w-32 bg-transparent text-fg outline-none" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
         {props.list.map((ep) => (
-          <option key={ep.id} value={ep.id}>{ep.name}</option>
+          <option key={ep.id} value={ep.id}>
+            {ep.name}
+          </option>
         ))}
       </select>
     </label>

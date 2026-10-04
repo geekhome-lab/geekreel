@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
-import { advancePipeline, getPipeline, listPipelines, retryPipelineBible, revisePipelineCast } from "../services/pipeline";
+import { advancePipeline, getPipeline, listPipelines, retryPipelineBible, revisePipelineBible, revisePipelineCast } from "../services/pipeline";
 import { loadPack } from "../services/styles";
 import { listEndpoints } from "../services/models";
 
@@ -73,12 +73,19 @@ pipelineRoutes.post("/:id/advance", async (c) => {
 
 pipelineRoutes.post("/:id/revise", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
-    target?: "character" | "event";
+    target?: "character" | "event" | "all";
     targetId?: string;
     instruction?: string;
     images?: Array<{ mime: string; dataBase64: string }>;
   };
-  if (body.target !== "character" && body.target !== "event") return err(c, "请点一个角色或一条事件");
+  if (body.target === "all") {
+    try {
+      return ok(c, await revisePipelineBible(c.req.param("id"), body.instruction ?? ""));
+    } catch (e) {
+      return err(c, e instanceof Error ? e.message : String(e), 422);
+    }
+  }
+  if (body.target !== "character" && body.target !== "event") return err(c, "请点一个角色或一条事件，或改整份");
   if (!body.targetId?.trim()) return err(c, "缺少要改的条目");
   try {
     return ok(

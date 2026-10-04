@@ -2,11 +2,12 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { sanitizeTitle, type Project, type SeriesKind } from "@vw/core";
+import { sanitizeTitle, type Project, type ScriptDoc, type SeriesKind } from "@vw/core";
 import { db } from "../db";
 import { err, newId, now, ok } from "../lib/resp";
 import { libraryRoot } from "../services/library";
-import { attachEpisode, createSeries, getSeries } from "../services/series";
+import { attachEpisode, createSeries, ensureProjectSeries, getSeries } from "../services/series";
+import { loadProjectScript, saveProjectScript } from "../services/scriptStore";
 
 function rowToProject(row: Record<string, unknown>): Project {
   return row as unknown as Project;
@@ -15,8 +16,19 @@ function rowToProject(row: Record<string, unknown>): Project {
 export const projectsRoutes = new Hono();
 
 projectsRoutes.get("/", (c) => {
-  const rows = db.query("SELECT * FROM projects ORDER BY updatedAt DESC").all() as Record<string, unknown>[];
-  return ok(c, rows.map(rowToProject));
+  const sort = c.req.query("sort") === "created" ? "createdAt" : "updatedAt";
+  const pageRaw = c.req.query("page");
+  if (!pageRaw && !c.req.query("pageSize")) {
+    const rows = db.query(`SELECT * FROM projects ORDER BY ${sort} DESC`).all() as Record<string, unknown>[];
+    return ok(c, rows.map(rowToProject));
+  }
+  const page = Math.max(Number(pageRaw ?? 1) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(c.req.query("pageSize") ?? 12) || 12, 1), 50);
+  const total = (db.query("SELECT COUNT(*) AS n FROM projects").get() as { n: number }).n;
+  const rows = db
+    .query(`SELECT * FROM projects ORDER BY ${sort} DESC LIMIT ? OFFSET ?`)
+    .all(pageSize, (page - 1) * pageSize) as Record<string, unknown>[];
+  return ok(c, { items: rows.map(rowToProject), total, page, pageSize, sort: sort === "createdAt" ? "created" : "updated" });
 });
 
 projectsRoutes.post("/", async (c) => {
@@ -93,8 +105,8 @@ projectsRoutes.post("/quick", async (c) => {
     JSON.stringify({ id, name, version: 1, createdAt: new Date(t).toISOString() }, null, 2),
     "utf-8",
   );
-  db.run("INSERT INTO projects (id, name, directory, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)", [
-    id, name, dir, t, t,
+  db.run("INSERT INTO projects (id, name, directory, stylePackId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?)", [
+    id, name, dir, body.stylePackId ?? null, t, t,
   ]);
 
   let seriesId = body.seriesId?.trim() || null;
@@ -117,19 +129,55 @@ projectsRoutes.post("/quick", async (c) => {
   return ok(c, rowToProject(row));
 });
 
+projectsRoutes.post("/:id/ensure-series", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { name?: string; kind?: SeriesKind };
+  try {
+    const series = ensureProjectSeries(
+      c.req.param("id"),
+      body.name?.trim() || "未命名",
+      body.kind === "whiteboard" ? "whiteboard" : body.kind === "drama" ? "drama" : "free",
+    );
+    const row = db.query("SELECT * FROM projects WHERE id = ?").get(c.req.param("id")) as Record<string, unknown>;
+    return ok(c, { project: rowToProject(row), series });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 404);
+  }
+});
+
 projectsRoutes.get("/:id", (c) => {
   const row = db.query("SELECT * FROM projects WHERE id = ?").get(c.req.param("id")) as Record<string, unknown> | null;
   if (!row) return err(c, "项目不存在", 404);
   return ok(c, rowToProject(row));
 });
 
+projectsRoutes.put("/:id/script", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { script?: ScriptDoc };
+  if (!body.script?.scenes?.length) return err(c, "没有可存的剧本");
+  try {
+    saveProjectScript(c.req.param("id"), body.script);
+    return ok(c, { saved: true });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 404);
+  }
+});
+
+projectsRoutes.get("/:id/script", (c) => {
+  const script = loadProjectScript(c.req.param("id"));
+  if (!script) return err(c, "这部还没有剧本", 404);
+  return ok(c, { script });
+});
+
 projectsRoutes.patch("/:id", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { name?: string };
-  const name = body.name?.trim();
-  if (!name) return err(c, "请填写项目名称");
+  const body = (await c.req.json().catch(() => ({}))) as { name?: string; stylePackId?: string | null };
   const id = c.req.param("id");
-  const res = db.run("UPDATE projects SET name = ?, updatedAt = ? WHERE id = ?", [name, now(), id]);
-  if (res.changes === 0) return err(c, "项目不存在", 404);
+  const exists = db.query("SELECT id FROM projects WHERE id = ?").get(id);
+  if (!exists) return err(c, "项目不存在", 404);
+  const name = body.name?.trim();
+  if (name) db.run("UPDATE projects SET name = ?, updatedAt = ? WHERE id = ?", [name, now(), id]);
+  if ("stylePackId" in body) {
+    db.run("UPDATE projects SET stylePackId = ?, updatedAt = ? WHERE id = ?", [body.stylePackId ?? null, now(), id]);
+  }
+  if (!name && !("stylePackId" in body)) return err(c, "请填写项目名称");
   const row = db.query("SELECT * FROM projects WHERE id = ?").get(id) as Record<string, unknown>;
   return ok(c, rowToProject(row));
 });

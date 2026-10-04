@@ -13,6 +13,12 @@ export const CAST_REVISE_SYSTEM =
 export const EVENT_REVISE_SYSTEM =
   "你是编剧。按用户意见改这一条事件，不要改人物名字。只输出这一条事件的 JSON。";
 
+export const BIBLE_REVISE_SYSTEM =
+  "你是短剧统筹。按用户一句话改整份人物档案和事件清单。可以改语言、语气、详略、删并条目。必须保住每条原来的 id。只输出 JSON。";
+
+export const STORY_REWRITE_SYSTEM =
+  "你是小说编辑。按用户要求改整篇正文。只输出改好的正文，不要标题、不要解释、不要 markdown。";
+
 export const CAST_TO_BIBLE_SYSTEM =
   "你是短剧编剧。人物造型必须严格按已确认的档案，不要改外貌和穿搭。只输出 JSON。";
 
@@ -64,6 +70,61 @@ ${hasImage ? "已附参考图，外貌和穿搭以图为准，再结合文字。
 
 只输出这一个角色：
 {"id":"${current.id}","name":"${current.name}","identity":"","personality":"","appearance":"","outfit":"","prompt":""}`;
+}
+
+export function reviseBiblePrompt(bible: Pick<DramaBible, "title" | "palette" | "cast" | "events">, instruction: string): string {
+  const slim = {
+    title: bible.title,
+    palette: bible.palette,
+    cast: (bible.cast ?? []).map(({ imageAssetId: _img, ...c }) => c),
+    events: bible.events ?? [],
+  };
+  return `当前整份：
+${JSON.stringify(slim)}
+
+用户要求：${instruction.trim()}
+
+规则：
+- 按这句话改整份。例如「全部改成中文」就把标题、色调说明、人物、事件都改成中文。
+- 保住每个角色和事件的 id，不要换号。
+- 可以增删事件或角色，新增的 id 用 Cxx / Exx 接着编。
+- 不要输出定妆图字段。
+
+只输出：
+{"title":"","palette":{"note":"","colors":[]},"cast":[{"id":"C01","name":"","identity":"","personality":"","appearance":"","outfit":"","prompt":""}],"events":[{"id":"E01","chapter":"","index":1,"title":"","summary":"","characters":["C01"]}]}`;
+}
+
+export function rewriteStoryPrompt(story: string, instruction: string): string {
+  return `用户要求：${instruction.trim()}
+
+原文：
+${story.trim()}`;
+}
+
+export function parseBibleRevise(text: string, current: DramaBible): DramaBible {
+  const json = extractJson(text);
+  if (!json) throw new Error("模型没按格式改整份，再试一次");
+  const rawCast = Array.isArray(json.cast) ? json.cast : null;
+  const rawEvents = Array.isArray(json.events) ? json.events : null;
+  if (!rawCast && !rawEvents && !String(json.title ?? "").trim()) {
+    throw new Error("改完的内容是空的，换一句再说");
+  }
+  const doc = parseCastDoc(JSON.stringify(json), current.title);
+  const oldById = new Map((current.cast ?? []).map((c) => [c.id, c]));
+  const cast = rawCast && rawCast.length
+    ? doc.cast.map((c) => ({ ...c, imageAssetId: oldById.get(c.id)?.imageAssetId ?? null }))
+    : (current.cast ?? []);
+  return {
+    ...current,
+    title: String(json.title ?? "").trim() || current.title,
+    palette: {
+      note: doc.paletteNote || current.palette.note,
+      colors: doc.colors.length ? doc.colors : current.palette.colors,
+    },
+    cast,
+    events: rawEvents && rawEvents.length ? doc.events : (current.events ?? []),
+    assets: assetsFromCast(cast),
+  };
 }
 
 export function reviseEventPrompt(current: StoryEvent, instruction: string): string {

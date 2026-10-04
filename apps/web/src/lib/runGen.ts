@@ -28,8 +28,7 @@ export function waitForJob(jobId: string, timeoutMs = 10 * 60_000): Promise<Job>
           finish(jobs[jobId]);
           return;
         }
-        const list = await api<Job[]>("/api/jobs");
-        const job = list.find((j) => j.id === jobId);
+        const job = await api<Job>(`/api/jobs/${jobId}`);
         if (job) finish(job);
       } catch {
         /* 忽略轮询错误 */
@@ -58,6 +57,7 @@ export async function submitImageGen(input: {
   size?: string;
   endpointId?: string | null;
   projectId?: string | null;
+  replaceAssetId?: string | null;
 }): Promise<Job> {
   return api<Job>("/api/gen/image", {
     method: "POST",
@@ -66,11 +66,27 @@ export async function submitImageGen(input: {
   });
 }
 
-export async function submitRender(projectId: string): Promise<Job> {
+export async function submitRender(projectId: string, burnSubs = true): Promise<Job> {
   return api<Job>("/api/timeline/render", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ projectId }),
+    body: JSON.stringify({ projectId, burnSubs }),
+  });
+}
+
+export async function submitTimelineFinish(
+  projectId: string,
+  opts?: { withSubtitles?: boolean; dub?: boolean; voice?: string; ttsEndpointId?: string },
+): Promise<Job> {
+  return api<Job>(`/api/timeline/project/${projectId}/finish`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      withSubtitles: opts?.withSubtitles !== false,
+      dub: opts?.dub === true,
+      voice: opts?.voice,
+      ttsEndpointId: opts?.ttsEndpointId,
+    }),
   });
 }
 

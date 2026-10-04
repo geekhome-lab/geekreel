@@ -41,12 +41,41 @@ class JobQueue {
     return row ? this.rowToJob(row) : null;
   }
 
-  list(opts: { status?: JobStatus; limit?: number } = {}): Job[] {
-    const limit = opts.limit ?? 100;
-    if (opts.status) {
-      return (db.query("SELECT * FROM jobs WHERE status = ? ORDER BY createdAt DESC LIMIT ?").all(opts.status, limit) as Record<string, unknown>[]).map((r) => this.rowToJob(r));
+  list(opts: { status?: JobStatus | JobStatus[]; limit?: number; offset?: number; q?: string; type?: string } = {}): Job[] {
+    return this.queryJobs(opts).items;
+  }
+
+  queryJobs(opts: { status?: JobStatus | JobStatus[]; limit?: number; offset?: number; q?: string; type?: string } = {}): {
+    items: Job[];
+    total: number;
+  } {
+    const where: string[] = [];
+    const params: SQLQueryBindings[] = [];
+    const statuses = opts.status ? (Array.isArray(opts.status) ? opts.status : [opts.status]) : [];
+    if (statuses.length === 1) {
+      where.push("status = ?");
+      params.push(statuses[0]!);
+    } else if (statuses.length > 1) {
+      where.push(`status IN (${statuses.map(() => "?").join(",")})`);
+      params.push(...statuses);
     }
-    return (db.query("SELECT * FROM jobs ORDER BY createdAt DESC LIMIT ?").all(limit) as Record<string, unknown>[]).map((r) => this.rowToJob(r));
+    if (opts.type) {
+      where.push("type = ?");
+      params.push(opts.type);
+    }
+    if (opts.q?.trim()) {
+      where.push("(type LIKE ? OR IFNULL(message, '') LIKE ? OR IFNULL(error, '') LIKE ?)");
+      const like = `%${opts.q.trim()}%`;
+      params.push(like, like, like);
+    }
+    const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    const total = (db.query(`SELECT COUNT(*) AS n FROM jobs ${clause}`).get(...params) as { n: number }).n;
+    const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
+    const offset = Math.max(opts.offset ?? 0, 0);
+    const items = (
+      db.query(`SELECT * FROM jobs ${clause} ORDER BY createdAt DESC LIMIT ? OFFSET ?`).all(...params, limit, offset) as Record<string, unknown>[]
+    ).map((r) => this.rowToJob(r));
+    return { items, total };
   }
 
   private update(id: string, fields: Record<string, SQLQueryBindings>): Job | null {

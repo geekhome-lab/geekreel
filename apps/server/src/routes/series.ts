@@ -2,11 +2,19 @@ import { Hono } from "hono";
 import type { SeriesKind } from "@vw/core";
 import { clipNovel, fetchNovelText, looksLikeHttpUrl } from "@vw/pipeline";
 import { err, ok } from "../lib/resp";
-import { createSeries, deleteSeries, listSeries, seriesDetail } from "../services/series";
+import { rewriteNovelStory } from "../services/pipeline";
+import { createSeries, deleteSeries, listSeries, listSeriesPage, seriesDetail } from "../services/series";
 
 export const seriesRoutes = new Hono();
 
-seriesRoutes.get("/", (c) => ok(c, listSeries()));
+seriesRoutes.get("/", (c) => {
+  const q = c.req.query("q") ?? "";
+  const pageRaw = c.req.query("page");
+  if (!pageRaw && !c.req.query("pageSize") && !q) return ok(c, listSeries());
+  const page = Math.max(Number(pageRaw ?? 1) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(c.req.query("pageSize") ?? 8) || 8, 1), 50);
+  return ok(c, listSeriesPage(q, page, pageSize));
+});
 
 seriesRoutes.post("/", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { name?: string; kind?: SeriesKind; stylePackId?: string; substyle?: string };
@@ -32,6 +40,17 @@ seriesRoutes.post("/clip", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { text?: string };
   if (!body.text?.trim()) return err(c, "还没有正文");
   return ok(c, clipNovel(body.text));
+});
+
+seriesRoutes.post("/rewrite", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { text?: string; instruction?: string };
+  if (!body.text?.trim()) return err(c, "还没有正文");
+  if (!body.instruction?.trim()) return err(c, "写一句你想怎么改，比如：翻成中文");
+  try {
+    return ok(c, await rewriteNovelStory(body.text, body.instruction));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
 });
 
 seriesRoutes.get("/:id", (c) => {

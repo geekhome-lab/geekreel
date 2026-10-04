@@ -7,6 +7,7 @@ import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
 import { waitForJob } from "../lib/runGen";
 import { iconPlay, iconPlus, iconTrash } from "../lib/icons";
+import { confirmDanger } from "../lib/prefs";
 import { Modal } from "../components/modal";
 
 export function StylesPage() {
@@ -82,7 +83,7 @@ export function StylesPage() {
 
   const remove = async () => {
     if (!pack?.editable) return;
-    if (!confirm(`删除「${pack.name}」？只删风格包，已做的项目还在。`)) return;
+    if (!confirmDanger(`删除「${pack.name}」？只删风格包，已做的项目还在。`)) return;
     try {
       await apiJson(`/api/styles/${pack.id}`, "delete");
       qc.invalidateQueries({ queryKey: ["styles"] });

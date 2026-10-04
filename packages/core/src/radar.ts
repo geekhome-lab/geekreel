@@ -88,3 +88,29 @@ export const intervalPresets: Array<{ minutes: number; label: string }> = [
   { minutes: 360, label: "每 6 小时" },
   { minutes: 1440, label: "每天一次" },
 ];
+
+/** 模型经常编造帖子链接。原文一律去该平台搜这条话题。 */
+export function topicQuery(title: string): string {
+  return title.replace(/#/g, "").replace(/\s+/g, " ").trim() || title.trim();
+}
+
+export function topicSearchUrl(platform: string, title: string): string {
+  const q = topicQuery(title);
+  const enc = encodeURIComponent(q);
+  switch (platform.trim()) {
+    case "微博": {
+      const weiboQ = /#.+#/.test(title) ? title.trim() : q;
+      return `https://s.weibo.com/weibo?q=${encodeURIComponent(weiboQ)}`;
+    }
+    case "抖音":
+      return `https://www.douyin.com/search/${enc}`;
+    case "B站":
+      return `https://search.bilibili.com/all?keyword=${enc}`;
+    case "知乎":
+      return `https://www.zhihu.com/search?type=content&q=${enc}`;
+    case "小红书":
+      return `https://www.xiaohongshu.com/search_result?keyword=${enc}`;
+    default:
+      return `https://www.bing.com/search?q=${encodeURIComponent(`${platform} ${q}`)}`;
+  }
+}

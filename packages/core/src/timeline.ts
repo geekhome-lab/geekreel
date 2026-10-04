@@ -139,6 +139,51 @@ export function formatSrt(cues: SrtCue[]): string {
     .concat("\n");
 }
 
+export function msToAssTime(ms: number): string {
+  const t = Math.max(0, Math.round(ms));
+  const h = Math.floor(t / 3600000);
+  const m = Math.floor((t % 3600000) / 60000);
+  const s = Math.floor((t % 60000) / 1000);
+  const cs = Math.floor((t % 1000) / 10);
+  const p = (n: number, l = 2) => String(n).padStart(l, "0");
+  return `${h}:${p(m)}:${p(s)}.${p(cs)}`;
+}
+
+function escapeAssText(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/[{}]/g, "").replace(/\n/g, "\\N");
+}
+
+/** 按画面分辨率写 ASS，避免 libass 默认 288 画布把字放得巨大。 */
+export function formatAss(cues: SrtCue[], opts?: { width?: number; height?: number }): string {
+  const width = opts?.width && opts.width > 0 ? opts.width : 1080;
+  const height = opts?.height && opts.height > 0 ? opts.height : 1920;
+  const portrait = height > width;
+  const font = portrait ? 34 : 26;
+  const marginV = Math.round(height * (portrait ? 0.068 : 0.055));
+  const marginX = Math.round(width * (portrait ? 0.08 : 0.05));
+  const outline = portrait ? 1.35 : 1.15;
+  const events = cues
+    .filter((c) => c.text.trim())
+    .map((c) => `Dialogue: 0,${msToAssTime(c.startMs)},${msToAssTime(c.endMs)},Caption,,0,0,0,,${escapeAssText(c.text.trim())}`)
+    .join("\n");
+  return `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${width}
+PlayResY: ${height}
+WrapStyle: 0
+ScaledBorderAndShadow: yes
+YCbCr Matrix: TV.709
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Caption,PingFang SC,${font},&H00F4F1EA,&H000000FF,&H6620140A,&H00000000,0,0,0,0,100,100,0.6,0,1,${outline},0,2,${marginX},${marginX},${marginV},1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+${events}
+`;
+}
+
 /** 字幕轨 → SRT  cues（按开始时间排序） */
 export function subtitleCues(doc: TimelineDoc): SrtCue[] {
   const track = subtitleTrack(doc);

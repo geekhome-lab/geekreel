@@ -15,11 +15,13 @@ import {
 } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { submitRender, submitTimelineTts, waitForJob } from "../lib/runGen";
+import { submitRender, submitTimelineFinish, waitForJob } from "../lib/runGen";
+import { usePrefs } from "../lib/prefs";
 import { iconPlus, iconUpload } from "../lib/icons";
 import { Modal } from "../components/modal";
 import { AssetPickerModal } from "../components/canvas/assetPickerModal";
 import { PreviewPlayer } from "../components/timeline/previewPlayer";
+import { VoicePicker } from "../components/timeline/voicePicker";
 
 function newClipId() {
   return `c${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -62,6 +64,9 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   const [exportJob, setExportJob] = useState<{ id: string; status: string; assetId?: string; error?: string } | null>(null);
   const [ttsBusy, setTtsBusy] = useState(false);
   const [ttsError, setTtsError] = useState("");
+  const autoSubtitles = usePrefs((s) => s.autoSubtitles);
+  const patchPrefs = usePrefs((s) => s.patch);
+  const [burnSubs, setBurnSubs] = useState(() => usePrefs.getState().autoSubtitles);
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const srtInput = useRef<HTMLInputElement>(null);
@@ -148,12 +153,13 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   const fromCanvas = async () => {
     setAssembling(true);
     try {
-      const r = await apiJson<{ doc: TimelineDoc; clipCount: number }>(
-        `/api/timeline/project/${projectId}/from-canvas`,
-        "post",
-      );
+      const job = await submitTimelineFinish(projectId, { withSubtitles: autoSubtitles, dub: false });
+      const done = await waitForJob(job.id, 15 * 60_000);
+      if (done.status === "failed") throw new Error(done.error || "装配失败");
+      const r = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
       setDoc(r.doc);
       setSaveState("saved");
+      queryClient.invalidateQueries({ queryKey: ["assets"] });
     } catch (e) {
       setExportJob({ id: "", status: "failed", error: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -283,7 +289,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
     if (!doc) return;
     setExportJob({ id: "", status: "submitting" });
     try {
-      const job = await submitRender(projectId);
+      const job = await submitRender(projectId, burnSubs);
       setExportJob({ id: job.id, status: "running" });
       const done = await waitForJob(job.id, 30 * 60_000);
       const result = JSON.parse(done.resultJson ?? "{}") as { assetId?: string };
@@ -321,9 +327,37 @@ function TimelineEditor({ projectId }: { projectId: string }) {
       {/* 工具栏 */}
       {lipsNotes.length > 0 ? (
         <p className="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-          {lipsNotes.length} 镜没对上嘴，先用定妆加配音。换一个会对口型的视频模型再点「出这一集」。
+          {lipsNotes.length} 镜画面没对上嘴，配音已按台词铺上。这里挪轨、改字幕即可。
         </p>
       ) : null}
+      <p className="mb-2 text-[11px] text-fg-faint">出片后画面和字幕会自动装上。配音要在这里选音色、试听，再铺上。</p>
+      {doc.tracks.find((t) => t.type === "video")?.clips.length ? (
+        <VoicePicker
+          projectId={projectId}
+          busy={ttsBusy}
+          onDub={async (voice, endpointId) => {
+            setTtsBusy(true);
+            setTtsError("");
+            try {
+              const job = await submitTimelineFinish(projectId, {
+                withSubtitles: autoSubtitles,
+                dub: true,
+                voice,
+                ttsEndpointId: endpointId,
+              });
+              await waitForJob(job.id, 15 * 60_000);
+              const next = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
+              setDoc(next.doc);
+              queryClient.invalidateQueries({ queryKey: ["assets"] });
+            } catch (e) {
+              setTtsError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setTtsBusy(false);
+            }
+          }}
+        />
+      ) : null}
+      {ttsError ? <p className="mb-2 text-[11px] text-red-300">{ttsError}</p> : null}
       <div className="mb-3 flex items-center gap-2">
         <h1 className="mr-2 text-sm font-semibold">时间线</h1>
         {doc.width < doc.height ? (
@@ -332,7 +366,10 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         <ToolBtn
           onClick={async () => {
             try {
-              const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId });
+              const job = await apiJson<Job>("/api/pipelines/render-episode", "post", {
+                projectId,
+                withSubtitles: autoSubtitles,
+              });
               await waitForJob(job.id, 20 * 60_000);
               const r = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
               setDoc(r.doc);
@@ -351,26 +388,27 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         <ToolBtn onClick={() => setPicking(true)}>{iconPlus({ width: 12, height: 12 })} 添加素材</ToolBtn>
         <ToolBtn onClick={() => srtInput.current?.click()}>{iconUpload({ width: 12, height: 12 })} 导入 SRT</ToolBtn>
         <ToolBtn onClick={addSubtitle}>加字幕</ToolBtn>
-        <ToolBtn
-          disabled={ttsBusy}
-          onClick={async () => {
-            setTtsBusy(true);
-            setTtsError("");
-            try {
-              const job = await submitTimelineTts(projectId);
-              await waitForJob(job.id, 15 * 60_000);
-              const next = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
-              setDoc(next.doc);
-              queryClient.invalidateQueries({ queryKey: ["assets"] });
-            } catch (e) {
-              setTtsError(e instanceof Error ? e.message : String(e));
-            } finally {
-              setTtsBusy(false);
-            }
-          }}
-        >
-          {ttsBusy ? "配音中…" : "字幕配音"}
-        </ToolBtn>
+        <label className="flex items-center gap-1.5 text-[11px] text-fg-dim">
+          <input
+            type="checkbox"
+            className="accent-amber-400"
+            checked={autoSubtitles}
+            onChange={(e) => {
+              patchPrefs({ autoSubtitles: e.target.checked });
+              setBurnSubs(e.target.checked);
+            }}
+          />
+          配字幕
+        </label>
+        <label className="flex items-center gap-1.5 text-[11px] text-fg-dim">
+          <input
+            type="checkbox"
+            className="accent-amber-400"
+            checked={burnSubs}
+            onChange={(e) => setBurnSubs(e.target.checked)}
+          />
+          导出烧字幕
+        </label>
         <div className="mx-1 h-4 w-px bg-line" />
         <ToolBtn onClick={splitAtPlayhead}>分割</ToolBtn>
         <ToolBtn onClick={deleteSelected} disabled={!selected}>删除</ToolBtn>
@@ -443,7 +481,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
             {playing ? "暂停" : "播放"}
           </button>
           <span className="font-mono">{fmtMs(playheadMs)} / {fmtMs(totalMs)}</span>
-          <span>空格键播放/暂停 · 音频轨预览暂不支持（导出时生效）</span>
+          <span>空格键播放/暂停 · 配音跟着播</span>
         </div>
       </div>
 

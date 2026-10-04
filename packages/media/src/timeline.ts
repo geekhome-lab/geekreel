@@ -25,6 +25,10 @@ function escapeFilterPath(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/:/g, "\\:").replace(/'/g, "\\'");
 }
 
+function burnSubtitleFilter(subPath: string): string {
+  return `[vcat]subtitles='${escapeFilterPath(subPath)}'`;
+}
+
 function fadeFilter(c: TimelineClip, durSec: number): string {
   if (c.transition !== "fade" || durSec <= 0.08) return "";
   const d = Math.min((c.transitionMs ?? 400) / 1000, durSec / 2);
@@ -111,7 +115,7 @@ export function buildRenderPlan(
   let subtitles: RenderPlan["subtitles"] = "none";
   if (cues.length > 0 && opts.srtPath) {
     if (opts.burnSubs) {
-      filters.push(`[vcat]subtitles='${escapeFilterPath(opts.srtPath)}'[vsub]`);
+      filters.push(`${burnSubtitleFilter(opts.srtPath)}[vsub]`);
       vout = "vsub";
       subtitles = "burn";
     } else {

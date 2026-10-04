@@ -1,0 +1,284 @@
+type Capability = "llm" | "image" | "video" | "tts";
+
+/** 点一下只填密钥就能加上的常用模型。Base URL 和模型名已经写好。 */
+export interface ModelPreset {
+  id: string;
+  name: string;
+  hint: string;
+  capability: Capability;
+  adapterType: string;
+  config: Record<string, string>;
+  secretKeys: string[];
+  secretLabels?: Record<string, string>;
+  webSearch?: boolean;
+  vision?: boolean;
+}
+
+export const modelPresets: ModelPreset[] = [
+  {
+    id: "deepseek-chat",
+    name: "DeepSeek",
+    hint: "到 platform.deepseek.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "openai-gpt4o",
+    name: "GPT-4o",
+    hint: "到 platform.openai.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.openai.com/v1", model: "gpt-4o" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "qwen-plus",
+    name: "通义千问",
+    hint: "到 dashscope.console.aliyun.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "kimi",
+    name: "Kimi",
+    hint: "到 platform.moonshot.cn 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.moonshot.cn/v1", model: "moonshot-v1-128k" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "glm-4",
+    name: "智谱 GLM-4",
+    hint: "到 open.bigmodel.cn 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "agnes-text",
+    name: "Agnes 文本",
+    hint: "到 agnes-ai.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://apihub.agnes-ai.com/v1", model: "agnes-3.0-flash" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "gemini-flash",
+    name: "Gemini",
+    hint: "到 aistudio.google.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "doubao-text",
+    name: "豆包",
+    hint: "到 ark.volcengine.com 复制 API Key。模型名按控制台接入点改。",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-1-5-pro-32k-250115" },
+    secretKeys: ["apiKey"],
+    vision: true,
+  },
+  {
+    id: "minimax-text",
+    name: "MiniMax 文本",
+    hint: "到 platform.minimaxi.com 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.minimax.io/v1", model: "MiniMax-Text-01" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "hunyuan",
+    name: "混元",
+    hint: "到 console.cloud.tencent.com/hunyuan 复制 API Key",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.hunyuan.cloud.tencent.com/v1", model: "hunyuan-turbos-latest" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "openai-image",
+    name: "GPT Image",
+    hint: "到 platform.openai.com 复制 API Key",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.openai.com/v1", model: "gpt-image-1" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "qwen-image",
+    name: "通义万相",
+    hint: "到 dashscope.console.aliyun.com 复制 API Key。出图走阿里云自己的接口，不是 OpenAI 那条。",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-image-plus" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "agnes-image",
+    name: "Agnes 图片",
+    hint: "到 agnes-ai.com 复制 API Key",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://apihub.agnes-ai.com/v1", model: "agnes-image-2.5-flash" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "doubao-image",
+    name: "豆包生图",
+    hint: "到 ark.volcengine.com 复制 API Key。默认 Seedream，不对再改模型名。",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-seedream-4-0-250828" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "flux",
+    name: "Flux",
+    hint: "到 siliconflow.cn 复制 API Key",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.siliconflow.cn/v1", model: "black-forest-labs/FLUX.1-schnell" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "cogview",
+    name: "智谱 CogView",
+    hint: "到 open.bigmodel.cn 复制 API Key",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "cogview-3-flash" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "gemini-image",
+    name: "Gemini 生图",
+    hint: "到 aistudio.google.com 复制 API Key",
+    capability: "image",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai", model: "gemini-2.5-flash-image" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "qwen-video",
+    name: "通义万相视频",
+    hint: "和通义万相出图用同一把百炼 API Key。默认 wan2.5，能出 5 或 10 秒。",
+    capability: "video",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "wan2.5-t2v-preview" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "kling",
+    name: "可灵",
+    hint: "到 app.klingai.com 开发者页复制 Access Key 和 Secret Key",
+    capability: "video",
+    adapterType: "kling",
+    config: { baseUrl: "https://api.klingai.com", model: "kling-v1-6" },
+    secretKeys: ["accessKey", "secretKey"],
+    secretLabels: { accessKey: "Access Key", secretKey: "Secret Key" },
+  },
+  {
+    id: "seedance",
+    name: "豆包 Seedance",
+    hint: "到 ark.volcengine.com 复制 API Key。模型名已填官方常用名，不对再去编辑改。",
+    capability: "video",
+    adapterType: "doubao-seedance",
+    config: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-seedance-1-0-pro" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "agnes-video",
+    name: "Agnes 视频",
+    hint: "到 agnes-ai.com 复制 API Key",
+    capability: "video",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://apihub.agnes-ai.com/v1", model: "agnes-video-2.5-flash" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "openai-sora",
+    name: "Sora",
+    hint: "到 platform.openai.com 复制 API Key",
+    capability: "video",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.openai.com/v1", model: "sora-2" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "minimax-video",
+    name: "MiniMax 海螺",
+    hint: "到 platform.minimaxi.com 复制 API Key",
+    capability: "video",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.minimax.io/v1", model: "MiniMax-Hailuo-02" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "openai-tts",
+    name: "OpenAI 配音",
+    hint: "到 platform.openai.com 复制 API Key",
+    capability: "tts",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.openai.com/v1", model: "tts-1", voice: "alloy" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "qwen-tts",
+    name: "通义配音",
+    hint: "到 dashscope.console.aliyun.com 复制 API Key",
+    capability: "tts",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen3-tts-flash", voice: "Cherry" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "minimax-tts",
+    name: "MiniMax 配音",
+    hint: "到 platform.minimaxi.com 复制 API Key",
+    capability: "tts",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://api.minimax.io/v1", model: "speech-2.5-hd-preview", voice: "female-shaonv" },
+    secretKeys: ["apiKey"],
+  },
+  {
+    id: "doubao-tts",
+    name: "豆包配音",
+    hint: "到 ark.volcengine.com 复制 API Key。模型名按控制台接入点改。",
+    capability: "tts",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-tts" },
+    secretKeys: ["apiKey"],
+  },
+];
+
+function stripSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+export function matchPreset(
+  preset: ModelPreset,
+  ep: { capability: Capability; adapterType: string; config: Record<string, string> },
+): boolean {
+  if (preset.capability !== ep.capability || preset.adapterType !== ep.adapterType) return false;
+  if (preset.config.model && ep.config.model && preset.config.model !== ep.config.model) return false;
+  const want = stripSlash(preset.config.baseUrl ?? "");
+  const got = stripSlash(ep.config.baseUrl ?? "");
+  if (want && got && want !== got) return false;
+  return true;
+}

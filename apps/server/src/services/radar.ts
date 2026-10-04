@@ -1,8 +1,12 @@
-import { sanitizeTitle, type RadarItem, type RadarSettings, type RadarSource, type RadarSourceKind, type RadarSub } from "@vw/core";
+import { topicSearchUrl, type RadarItem, type RadarSettings, type RadarSource, type RadarSourceKind, type RadarSub } from "@vw/core";
 import { getAdapter } from "@vw/models";
 import {
+  RADAR_STORY_SYSTEM,
   RADAR_SYSTEM,
+  boardPlatforms,
   buildFocusTemplate,
+  buildPlatformSearchTemplate,
+  fallbackStoryFromItem,
   inQuietHours,
   isDue,
   itemHash,
@@ -10,6 +14,7 @@ import {
   parseHttpItems,
   parseRadarResponse,
   parseRss,
+  radarStoryPrompt,
   sourceTemplates,
   type ParsedRadarItem,
 } from "@vw/radar";
@@ -21,9 +26,6 @@ import { wsHub } from "../ws";
 import { getEndpoint, listEndpoints, resolveEndpoint } from "./models";
 import { deliverToIds } from "./push";
 import { chatMetered } from "./usage";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { libraryRoot } from "./library";
 
 function publicBase(): string {
   return `http://${host}:${port}`;
@@ -65,7 +67,7 @@ interface ItemRow {
 }
 
 function rowToItem(row: ItemRow): RadarItem {
-  return row;
+  return { ...row, url: topicSearchUrl(row.platform, row.title) };
 }
 
 interface SubRow {
@@ -96,19 +98,38 @@ function rowToSub(row: SubRow): RadarSub {
 
 export function seedRadarSources(): void {
   const count = (db.query("SELECT COUNT(*) AS n FROM radar_sources").get() as { n: number }).n;
-  if (count > 0) return;
-  const t = now();
-  for (const tpl of sourceTemplates) {
-    db.run(
-      `INSERT INTO radar_sources (id, name, kind, platform, queryTemplate, intervalMinutes, enabled, lastRunAt, createdAt)
-       VALUES (?, ?, 'ai-query', ?, ?, ?, 1, ?, ?)`,
-      [tpl.id, tpl.name, tpl.platform, tpl.queryTemplate, tpl.intervalMinutes, t, t],
-    );
+  if (count === 0) {
+    const t = now();
+    for (const tpl of sourceTemplates) {
+      db.run(
+        `INSERT INTO radar_sources (id, name, kind, platform, queryTemplate, intervalMinutes, enabled, lastRunAt, createdAt)
+         VALUES (?, ?, 'ai-query', ?, ?, ?, 1, ?, ?)`,
+        [tpl.id, tpl.name, tpl.platform, tpl.queryTemplate, tpl.intervalMinutes, t, t],
+      );
+    }
+  }
+  pruneHiddenSources();
+}
+
+/** 榜上只留微博/抖音/B站/知乎/小红书。HN、自定义 AI 等关掉。 */
+export function pruneHiddenSources(): void {
+  for (const s of listSources()) {
+    const official = sourceTemplates.some((t) => t.id === s.id);
+    if (!official && s.enabled) {
+      db.run("UPDATE radar_sources SET enabled = 0 WHERE id = ?", [s.id]);
+    }
   }
 }
 
 export function listSources(): RadarSource[] {
   return (db.query("SELECT * FROM radar_sources ORDER BY createdAt ASC").all() as SourceRow[]).map(rowToSource);
+}
+
+export function listBoardSources(): RadarSource[] {
+  const order = new Map(sourceTemplates.map((t, i) => [t.id, i]));
+  return listSources()
+    .filter((s) => s.enabled && order.has(s.id))
+    .sort((a, b) => (order.get(a.id) ?? 99) - (order.get(b.id) ?? 99));
 }
 
 export function getSource(id: string): RadarSource | null {
@@ -173,10 +194,14 @@ export function deleteSource(id: string): boolean {
   return db.run("DELETE FROM radar_sources WHERE id = ?", [id]).changes > 0;
 }
 
-export function listItems(opts: { platform?: string; q?: string; limit?: number } = {}): RadarItem[] {
+export function listItems(opts: { platform?: string; q?: string; limit?: number; boardOnly?: boolean } = {}): RadarItem[] {
   const limit = opts.limit ?? 60;
   const where: string[] = [];
   const params: Array<string | number> = [];
+  if (opts.boardOnly) {
+    where.push(`platform IN (${boardPlatforms.map(() => "?").join(",")})`);
+    params.push(...boardPlatforms);
+  }
   if (opts.platform) {
     where.push("platform = ?");
     params.push(opts.platform);
@@ -376,12 +401,13 @@ export const fetchRadarHandler: JobHandler = async (job, ctx) => {
 };
 
 const runFetch: JobHandler = async (job, ctx) => {
-  const { sourceId } = JSON.parse(job.payloadJson) as { sourceId: string };
+  const { sourceId, q } = JSON.parse(job.payloadJson) as { sourceId: string; q?: string };
   const source = getSource(sourceId);
   if (!source) throw new Error("观察源不存在");
+  const focus = q?.trim() ?? "";
 
   let parsed: ParsedRadarItem[];
-  if (source.kind === "rss" || source.kind === "http-api") {
+  if (!focus && (source.kind === "rss" || source.kind === "http-api")) {
     ctx.progress(0.2, source.kind === "rss" ? "拉取 RSS" : "拉取接口");
     parsed = await fetchFeedItems(source);
   } else {
@@ -390,13 +416,14 @@ const runFetch: JobHandler = async (job, ctx) => {
     const adapter = getAdapter(endpoint.adapterType);
     if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
-    ctx.progress(0.25, `正在问 ${endpoint.name}`);
+    const prompt = focus ? buildPlatformSearchTemplate(source.platform, focus) : source.queryTemplate;
+    ctx.progress(0.25, focus ? `正在查${source.platform}「${focus}」` : `正在问 ${endpoint.name}`);
     const text = await chatMetered(
       adapter,
       endpoint,
       {
         system: RADAR_SYSTEM,
-        prompt: source.queryTemplate,
+        prompt,
         webSearch: true,
       },
       { jobType: "radar.fetch" },
@@ -452,49 +479,31 @@ export const digestRadarHandler: JobHandler = async (_job, ctx) => {
   return { sent: true, count: items.length };
 };
 
-/** 热点 → 快速建项目并搭好「文本→文生图」画布 */
-export function projectFromItem(itemId: string): { projectId: string; name: string } {
+/** 热点 → 收成首页「想法」，用户改完再走剧本/定妆/出片 */
+export async function storyFromItem(itemId: string): Promise<{
+  idea: string;
+  title: string;
+  platform: string;
+  itemId: string;
+}> {
   const item = getItem(itemId);
   if (!item) throw new Error("这条热点不存在或已过期");
-
-  const name = sanitizeTitle(item.title, 16) || "热点选题";
-  const id = newId();
-  const d = new Date();
-  const mmdd = `${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  const hash = id.replace(/-/g, "").slice(0, 4);
-  const dir = join(libraryRoot(), "projects", `${mmdd}_${sanitizeTitle(name, 24)}_${hash}`);
-  mkdirSync(join(dir, "canvas"), { recursive: true });
-  mkdirSync(join(dir, "pipeline"), { recursive: true });
-  mkdirSync(join(dir, "export"), { recursive: true });
-  const t = now();
-  writeFileSync(
-    join(dir, "project.vw.json"),
-    JSON.stringify({ id, name, version: 1, source: "radar", itemId, createdAt: new Date(t).toISOString() }, null, 2),
-    "utf-8",
-  );
-  db.run("INSERT INTO projects (id, name, directory, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)", [id, name, dir, t, t]);
-
-  const shot = `根据这个正在热议的话题做一条短视频画面：${item.title}。${item.summary}。电影感构图，信息清晰，适合竖屏或横屏封面。`;
-  const canvasId = newId();
-  const relPath = "canvas/主画布.json";
-  const doc = {
-    version: 1,
-    nodes: [
-      { id: "text_0", type: "textNode", position: { x: 80, y: 120 }, data: { text: shot } },
-      {
-        id: "gen_0",
-        type: "imageGenNode",
-        position: { x: 400, y: 100 },
-        data: { prompt: "", size: "1024x1024", endpointId: null, status: "idle" },
-      },
-    ],
-    edges: [{ id: "e_0", source: "text_0", sourceHandle: "out", target: "gen_0", targetHandle: "prompt", animated: true }],
-    viewport: null,
-  };
-  writeFileSync(join(dir, relPath), JSON.stringify(doc), "utf-8");
-  db.run("INSERT INTO canvas_docs (id, projectId, name, path, updatedAt) VALUES (?, ?, ?, ?, ?)", [
-    canvasId, id, "主画布", relPath, t,
-  ]);
-
-  return { projectId: id, name };
+  const fallback = fallbackStoryFromItem(item);
+  try {
+    const endpoint = resolveEndpoint("llm");
+    const adapter = endpoint ? getAdapter(endpoint.adapterType) : null;
+    if (!endpoint || !adapter?.chat) {
+      return { idea: fallback, title: item.title, platform: item.platform, itemId };
+    }
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      { system: RADAR_STORY_SYSTEM, prompt: radarStoryPrompt(item) },
+      { jobType: "radar.story" },
+    );
+    const idea = text.replace(/^```[\s\S]*?```$/m, "").trim() || fallback;
+    return { idea, title: item.title, platform: item.platform, itemId };
+  } catch {
+    return { idea: fallback, title: item.title, platform: item.platform, itemId };
+  }
 }

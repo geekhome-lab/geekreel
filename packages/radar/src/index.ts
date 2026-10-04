@@ -6,8 +6,10 @@
 export { parseHttpItems, parseRss, type ParsedRadarItem } from "./feeds";
 
 import { createHash } from "node:crypto";
-import type { RadarItem, RadarSub } from "@vw/core";
+import { topicSearchUrl, type RadarItem, type RadarSub } from "@vw/core";
 import type { ParsedRadarItem } from "./feeds";
+
+export { topicSearchUrl, topicQuery } from "@vw/core";
 
 export interface SourceTemplate {
   id: string;
@@ -19,8 +21,8 @@ export interface SourceTemplate {
 
 const JSON_RULE = `
 只输出 JSON，不要解释、不要 markdown。格式：
-{"items":[{"title":"标题","platform":"平台名","url":"https://...或空字符串","heat":0到100的整数,"heatText":"原文热度描述如热搜第3","summary":"一句话摘要"}]}
-至少 8 条、最多 20 条。必须是此刻互联网上真实在传的话题，不要编造过期新闻。热度是你根据排名/讨论量给出的估计。`;
+{"items":[{"title":"标题","platform":"平台名","url":"","heat":0到100的整数,"heatText":"原文热度描述如热搜第3","summary":"一句话摘要"}]}
+url 必须留空，禁止编造帖子链接或占位地址。至少 8 条、最多 20 条。必须是此刻互联网上真实在传的话题，不要编造过期新闻。热度是你根据排名/讨论量给出的估计。`;
 
 export const sourceTemplates: SourceTemplate[] = [
   {
@@ -94,11 +96,11 @@ export function parseRadarResponse(text: string, fallbackPlatform: string): Pars
     if (!title) continue;
     const heatNum = Number(r.heat);
     const heat = Number.isFinite(heatNum) ? Math.max(0, Math.min(100, Math.round(heatNum))) : 50;
-    const urlRaw = String(r.url ?? "").trim();
+    const platform = String(r.platform ?? fallbackPlatform).trim() || fallbackPlatform;
     out.push({
       title: title.slice(0, 160),
-      platform: String(r.platform ?? fallbackPlatform).trim() || fallbackPlatform,
-      url: urlRaw.startsWith("http") ? urlRaw.slice(0, 500) : null,
+      platform,
+      url: topicSearchUrl(platform, title),
       heat,
       heatText: String(r.heatText ?? r.heat_text ?? "").trim().slice(0, 80),
       summary: String(r.summary ?? "").trim().slice(0, 240),
@@ -139,4 +141,40 @@ export function matchSubscription(
 export function buildFocusTemplate(focus: string): string {
   const topic = focus.trim() || "综合";
   return `请联网查询此刻「${topic}」领域正在被讨论的热点话题。${JSON_RULE}`;
+}
+
+/** 在某个平台里搜一个词，例如微博 + AI */
+export function buildPlatformSearchTemplate(platform: string, topic: string): string {
+  const p = platform.trim() || "全网";
+  const t = topic.trim() || "综合";
+  return `请联网查询此刻「${p}」上关于「${t}」的热点话题、热搜或正在讨论的内容。只列和「${t}」相关的条目，标题或摘要里要能看出和「${t}」的关系。${JSON_RULE}`;
+}
+
+export const boardPlatforms = sourceTemplates.map((t) => t.platform);
+
+export function isBoardPlatform(platform: string): boolean {
+  return boardPlatforms.includes(platform.trim());
+}
+
+/** 没有文本模型时，把热点收成首页「想法」正文 */
+export function fallbackStoryFromItem(item: Pick<RadarItem, "title" | "platform" | "summary">): string {
+  return [
+    `根据${item.platform}热点做一条短视频。`,
+    item.title.trim(),
+    item.summary?.trim(),
+    "先讲清楚这件事是什么、为什么现在热、观众该记住哪一句。可改角度、时长、人物。",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export const RADAR_STORY_SYSTEM =
+  "你把热点收成一条短视频想法。只写用户能直接改的正文，不要标题栏，不要解释，不要 markdown。写清：讲什么、给谁看、大概多久、几个关键画面或人物。摘要里没有的细节不要编。";
+
+export function radarStoryPrompt(item: Pick<RadarItem, "title" | "platform" | "summary">): string {
+  return `平台：${item.platform}
+标题：${item.title}
+摘要：${item.summary?.trim() || "无"}
+
+收成一段可直接贴进「想法」框的短视频说明，4–8 行。`;
 }

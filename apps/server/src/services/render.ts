@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { formatSrt, subtitleCues, type TimelineDoc } from "@vw/core";
+import { formatAss, formatSrt, subtitleCues, type TimelineDoc } from "@vw/core";
 import { buildRenderPlan, detectBins, executeRender, hasSubtitlesFilter, type RenderAssetInfo } from "@vw/media";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
@@ -11,7 +11,10 @@ import { absInLibrary, storeAsset } from "./library";
  * 产物同时硬链接注册进资产库（source=pipeline），方便在资产库预览管理。
  */
 export const renderTimelineHandler: JobHandler = async (job, ctx) => {
-  const { projectId } = JSON.parse(job.payloadJson) as { projectId: string };
+  const { projectId, burnSubs: wantBurn } = JSON.parse(job.payloadJson) as {
+    projectId: string;
+    burnSubs?: boolean;
+  };
   const project = db.query("SELECT * FROM projects WHERE id = ?").get(projectId) as
     | { id: string; name: string; directory: string }
     | null;
@@ -54,9 +57,14 @@ export const renderTimelineHandler: JobHandler = async (job, ctx) => {
   if (cues.length > 0) {
     const tmpDir = join(project.directory, "pipeline");
     mkdirSync(tmpDir, { recursive: true });
-    srtPath = join(tmpDir, "render-subtitles.srt");
-    writeFileSync(srtPath, formatSrt(cues), "utf-8");
-    burnSubs = await hasSubtitlesFilter(bins.ffmpeg);
+    burnSubs = wantBurn !== false && (await hasSubtitlesFilter(bins.ffmpeg));
+    if (burnSubs) {
+      srtPath = join(tmpDir, "render-subtitles.ass");
+      writeFileSync(srtPath, formatAss(cues, { width: doc.width, height: doc.height }), "utf-8");
+    } else {
+      srtPath = join(tmpDir, "render-subtitles.srt");
+      writeFileSync(srtPath, formatSrt(cues), "utf-8");
+    }
   }
 
   // 4. 输出路径：export/yyyyMMdd-HHmm_项目名.mp4

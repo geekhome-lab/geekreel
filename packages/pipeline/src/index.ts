@@ -6,6 +6,8 @@
 import type { DramaAssetItem, DramaBible, DramaEpisode, DramaShot, PaletteDoc } from "@vw/core";
 
 export * from "./lock";
+export * from "./script";
+export * from "./dialogue";
 
 export const NOVEL_DRAMA_SYSTEM =
   "你是国风短剧编剧。把故事拆成正好 5 集、每集 3 个镜头的可拍摄圣经。只输出 JSON，不要解释。";

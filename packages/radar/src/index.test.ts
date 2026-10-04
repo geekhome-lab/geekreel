@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   buildFocusTemplate,
+  buildPlatformSearchTemplate,
+  fallbackStoryFromItem,
   inQuietHours,
   isDue,
   itemHash,
@@ -8,6 +10,7 @@ import {
   parseHttpItems,
   parseRadarResponse,
   parseRss,
+  topicSearchUrl,
 } from "./index";
 
 test("parseRadarResponse 能抠 markdown 围栏", () => {
@@ -18,13 +21,20 @@ test("parseRadarResponse 能抠 markdown 围栏", () => {
   expect(items).toHaveLength(1);
   expect(items[0]!.title).toBe("A");
   expect(items[0]!.heat).toBe(88);
+  expect(items[0]!.url).toContain("s.weibo.com/weibo?q=");
 });
 
 test("parseRadarResponse 热度夹紧 + 缺字段兜底", () => {
   const items = parseRadarResponse('{"items":[{"title":"B","heat":999}]}', "抖音");
   expect(items[0]!.heat).toBe(100);
   expect(items[0]!.platform).toBe("抖音");
-  expect(items[0]!.url).toBeNull();
+  expect(items[0]!.url).toContain("douyin.com/search/");
+});
+
+test("topicSearchUrl 按平台拼可打开的搜索页", () => {
+  expect(topicSearchUrl("微博", "#苹果免费换新#")).toContain("s.weibo.com/weibo?q=");
+  expect(topicSearchUrl("知乎", "AI提示词")).toContain("zhihu.com/search?type=content");
+  expect(topicSearchUrl("知乎", "AI提示词")).not.toContain("xxxxxx");
 });
 
 test("itemHash 对空白和大小写不敏感", () => {
@@ -56,6 +66,12 @@ test("buildFocusTemplate 注入领域", () => {
   expect(buildFocusTemplate("电商")).toContain("电商");
 });
 
+test("buildPlatformSearchTemplate 限定平台和词", () => {
+  const t = buildPlatformSearchTemplate("微博", "AI");
+  expect(t).toContain("微博");
+  expect(t).toContain("AI");
+});
+
 test("parseRss 抽 item 标题和链接", () => {
   const items = parseRss(
     `<?xml version="1.0"?><rss><channel>
@@ -77,4 +93,15 @@ test("parseHttpItems 认 items 数组", () => {
   );
   expect(items[0]!.title).toBe("接口热");
   expect(items[0]!.heat).toBe(77);
+});
+
+test("fallbackStoryFromItem 把标题摘要收成可改的想法", () => {
+  const idea = fallbackStoryFromItem({
+    platform: "知乎",
+    title: "午休健身算工伤吗",
+    summary: "法院改判认定属预备性工作",
+  });
+  expect(idea).toContain("知乎");
+  expect(idea).toContain("午休健身算工伤吗");
+  expect(idea).toContain("法院改判认定属预备性工作");
 });

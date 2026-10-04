@@ -56,6 +56,10 @@ export const iconRefresh = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M3 12a9 9 0 0 1 15-6.7L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15 6.7L3 16" /><path d="M3 21v-5h5" /></svg>
 );
 
+export const iconSearch = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+);
+
 export const iconPlay = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><polygon points="6 3 20 12 6 21 6 3" /></svg>
 );
@@ -106,6 +110,10 @@ export const iconSeries = (p: SVGProps<SVGSVGElement>) => (
 
 export const iconBook = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" /><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z" /><path d="M8 7h8M8 11h6" /></svg>
+);
+
+export const iconChevron = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="m6 9 6 6 6-6" /></svg>
 );
 
 export const iconPalette = (p: SVGProps<SVGSVGElement>) => (

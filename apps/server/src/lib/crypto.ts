@@ -48,3 +48,12 @@ export function maskSecret(plain: string): string {
   if (plain.length <= 8) return "****";
   return `${plain.slice(0, 3)}…${plain.slice(-4)}`;
 }
+
+/** 编辑回传的打码/空值，不能当新密钥写入。 */
+export function isPlaceholderSecret(value: string | undefined | null): boolean {
+  const s = (value ?? "").trim();
+  if (!s) return true;
+  if (s === "****" || /^\*+$/.test(s)) return true;
+  if (s.includes("…") || s.includes("...")) return true;
+  return false;
+}

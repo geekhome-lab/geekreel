@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { notifyJobDone } from "./lib/prefs";
 import { connectWs, onWsEvent } from "./lib/store";
 import { Layout } from "./components/layout";
 import { HomePage } from "./pages/homePage";
@@ -32,8 +33,16 @@ function WsBridge() {
       if (ev.type === "asset.upsert" || ev.type === "asset.remove") {
         qc.invalidateQueries({ queryKey: ["assets"] });
         qc.invalidateQueries({ queryKey: ["asset-stats"] });
+        qc.invalidateQueries({ queryKey: ["asset-folders"] });
       }
       if (ev.type === "job.upsert") {
+        notifyJobDone(ev.job);
+        if (ev.job.type === "gen.video" && ev.job.status === "done" && ev.job.projectId) {
+          sessionStorage.setItem("vw.needDub", ev.job.projectId);
+        }
+        if (ev.job.type === "timeline.finish" && (ev.job.status === "done" || ev.job.status === "failed")) {
+          sessionStorage.removeItem("vw.needDub");
+        }
         qc.invalidateQueries({ queryKey: ["jobs"] });
         if (ev.job.status === "done") qc.invalidateQueries({ queryKey: ["model-usage"] });
         if (ev.job.type === "asset.migrate" && ev.job.status === "done") qc.invalidateQueries({ queryKey: ["settings"] });

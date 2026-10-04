@@ -40,6 +40,34 @@ export async function chatMetered(
   return result.text;
 }
 
+export function recomputeUsageCosts(endpointId: string, config: Record<string, string>) {
+  const rows = db
+    .query(
+      `SELECT id, promptTokens, completionTokens, images, audioChars, videoSec
+       FROM model_usage WHERE endpointId = ?`,
+    )
+    .all(endpointId) as Array<{
+    id: string;
+    promptTokens: number;
+    completionTokens: number;
+    images: number;
+    audioChars: number;
+    videoSec: number;
+  }>;
+  for (const row of rows) {
+    const cost = computeCost({
+      config,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+      images: row.images,
+      audioChars: row.audioChars,
+      videoSec: row.videoSec,
+    });
+    db.run("UPDATE model_usage SET cost = ? WHERE id = ?", [cost, row.id]);
+  }
+  return rows.length;
+}
+
 export function recordUsage(input: UsageInput) {
   const cost = computeCost({
     config: input.endpoint.config,

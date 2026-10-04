@@ -36,6 +36,7 @@ test("heuristic + 写入后能被扫描到", () => {
   const found = discoverStylePacks([dir]).find((p) => p.public.id === written.id);
   expect(found?.public.name).toBe("电商带货");
   expect(found?.public.editable).toBe(true);
+  expect(found?.public.stylePrompt).toContain("红金");
   expect(found?.styleBlock).toContain("红金");
   rmSync(dir, { recursive: true, force: true });
 });

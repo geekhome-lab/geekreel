@@ -1,6 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, copyFileSync, linkSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, copyFileSync, linkSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import {
+  assetWorkFolder,
+  assetWorkLabel,
   buildAssetRelPath,
   parseAssetFileName,
   sanitizeTitle,
@@ -134,11 +136,17 @@ export interface StoreInput {
   linkFromPath?: string;
 }
 
-/** 资产入库：按 类型/年月/日期_标题_hash 落盘（原子写），建行，提交索引任务 */
+/** 资产入库：按 works/作品/第NN集/ 落盘（原子写），建行，提交索引任务 */
 export function storeAsset(input: StoreInput): Asset {
   const id = newId();
   const title = sanitizeTitle(input.title);
-  const relPath = buildAssetRelPath({ type: input.type, title, id, ext: input.ext });
+  const relPath = buildAssetRelPath({
+    type: input.type,
+    title,
+    id,
+    ext: input.ext,
+    workFolder: workFolderFor(input.projectId),
+  });
   const abs = absInLibrary(relPath);
   mkdirSync(dirname(abs), { recursive: true });
 
@@ -148,7 +156,8 @@ export function storeAsset(input: StoreInput): Asset {
   } else {
     const tmp = `${abs}.tmp-${process.pid}`;
     if (input.data !== undefined) {
-      Bun.write(tmp, input.data);
+      const buf = input.data instanceof Uint8Array ? Buffer.from(input.data) : Buffer.from(new Uint8Array(input.data));
+      writeFileSync(tmp, buf);
     } else if (input.fromPath) {
       copyFileSync(input.fromPath, tmp);
     } else {
@@ -171,6 +180,47 @@ export function storeAsset(input: StoreInput): Asset {
   return asset;
 }
 
+/** 定妆换图：覆盖原文件，id 不变，同角色旧图清掉。 */
+export function replaceAssetContent(id: string, data: Uint8Array | ArrayBuffer): Asset {
+  const asset = getAsset(id);
+  if (!asset) throw new Error("要换的那张已经不在了");
+  const abs = absInLibrary(asset.path);
+  mkdirSync(dirname(abs), { recursive: true });
+  const tmp = `${abs}.tmp-${process.pid}`;
+  const buf = data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(new Uint8Array(data));
+  writeFileSync(tmp, buf);
+  renameSync(tmp, abs);
+  const sizeBytes = Bun.file(abs).size;
+  if (asset.thumbPath) {
+    try {
+      const thumb = absInLibrary(asset.thumbPath);
+      if (existsSync(thumb)) unlinkSync(thumb);
+    } catch {
+      /* 缩略图稍后重建 */
+    }
+  }
+  db.run("UPDATE assets SET sizeBytes = ?, width = NULL, height = NULL WHERE id = ?", [sizeBytes, id]);
+  purgeSameSlot(asset);
+  const next = getAsset(id)!;
+  broadcastAsset(next);
+  jobQueue.submit("asset.index", { assetId: id }, asset.projectId);
+  return next;
+}
+
+function purgeSameSlot(asset: Asset) {
+  if (!asset.projectId) return;
+  const rows = db
+    .query("SELECT id FROM assets WHERE projectId = ? AND type = ? AND title = ? AND kind = ? AND id != ?")
+    .all(asset.projectId, asset.type, asset.title, asset.kind, asset.id) as Array<{ id: string }>;
+  for (const row of rows) {
+    try {
+      removeAssetRecord(row.id);
+    } catch {
+      /* 旧图清不掉就留着 */
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // 重命名（同步改文件名的标题部分，目录与 hash 不变）
 // ---------------------------------------------------------------------------
@@ -184,7 +234,7 @@ export function renameAsset(id: string, newTitle: string): Asset {
   let relPath = asset.path;
   let name = asset.name;
   if (parsed) {
-    const newName = `${parsed.mmdd}_${title}_${parsed.hash}.${parsed.ext}`;
+    const newName = `${parsed.prefix}_${title}_${parsed.hash}.${parsed.ext}`;
     if (newName !== asset.name) {
       const newRel = join(dirname(asset.path), newName);
       const oldAbs = absInLibrary(asset.path);
@@ -247,9 +297,7 @@ function fileMentions(abs: string, id: string): boolean {
   }
 }
 
-export function deleteAsset(id: string): boolean {
-  const refs = countAssetRefs(id);
-  if (refs > 0) throw new Error("时间线或画布还在用这条素材，先撤下来再删");
+function removeAssetRecord(id: string): boolean {
   const asset = getAsset(id);
   if (!asset) return false;
   for (const rel of [asset.path, asset.thumbPath, asset.proxyPath]) {
@@ -266,9 +314,45 @@ export function deleteAsset(id: string): boolean {
   return true;
 }
 
+export function deleteAsset(id: string): boolean {
+  const refs = countAssetRefs(id);
+  if (refs > 0) throw new Error("时间线或画布还在用这条素材，先撤下来再删");
+  return removeAssetRecord(id);
+}
+
 // ---------------------------------------------------------------------------
 // 统计
 // ---------------------------------------------------------------------------
+
+function workFolderFor(projectId?: string | null): string | undefined {
+  if (!projectId) return undefined;
+  const row = db.query(
+    `SELECT p.name AS projectName, p.episodeIndex AS episodeIndex, s.name AS seriesName
+     FROM projects p LEFT JOIN series s ON s.id = p.seriesId WHERE p.id = ?`,
+  ).get(projectId) as { projectName: string; episodeIndex: number | null; seriesName: string | null } | null;
+  if (!row) return undefined;
+  const work = sanitizeTitle(row.seriesName || row.projectName, 24);
+  if (row.seriesName && row.episodeIndex) {
+    return `works/${work}/第${String(row.episodeIndex).padStart(2, "0")}集`;
+  }
+  return `works/${work}`;
+}
+
+export function listAssetFolders(): Array<{ folder: string; label: string; count: number }> {
+  const rows = db.query("SELECT path FROM assets").all() as Array<{ path: string }>;
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    const folder = assetWorkFolder(r.path);
+    map.set(folder, (map.get(folder) ?? 0) + 1);
+  }
+  return [...map.entries()]
+    .map(([folder, count]) => ({
+      folder,
+      label: assetWorkLabel(folder),
+      count,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, "zh"));
+}
 
 export function assetStats() {
   const byType = db

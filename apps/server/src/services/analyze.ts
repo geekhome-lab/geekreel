@@ -21,6 +21,8 @@ import { absInLibrary, storeAsset } from "./library";
 import { getEndpoint, listEndpoints, resolveEndpoint } from "./models";
 import { chatMetered, recordUsage } from "./usage";
 
+const DOWNLOAD_FAIL = "这条链拉不下来。把视频保存到本地，导入「资产库」，点开视频用「复刻爆款视频」。";
+
 interface ReportRow {
   id: string;
   sourceUrl: string | null;
@@ -94,7 +96,7 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
 
   if (payload.assetId) {
     const row = db.query("SELECT * FROM assets WHERE id = ?").get(payload.assetId) as { path: string; title: string; type: string } | null;
-    if (!row || row.type !== "video") throw new Error("请选一条视频资产");
+    if (!row || row.type !== "video") throw new Error("请选一条视频资产。导入成片后再点「复刻爆款视频」。");
     videoAbs = absInLibrary(row.path);
     title = row.title;
   } else if (sourceUrl) {
@@ -105,13 +107,19 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
       ctx.progress(0.12, "准备下载器");
       ytdlp = await ensureYtdlp(dataDir);
     }
-    if (!ytdlp.bin) throw new Error("没有 yt-dlp。把视频导入「资产库」再分析，或设置 VW_YTDLP。");
-    const dl = await downloadWithYtdlp({
-      bin: ytdlp.bin,
-      url: sourceUrl,
-      outDir: join(workDir, "dl"),
-      ffmpegBin: bins.ffmpeg,
-    });
+    if (!ytdlp.bin) throw new Error(`没有下载器。${DOWNLOAD_FAIL}`);
+    let dl: { file: string; title: string };
+    try {
+      dl = await downloadWithYtdlp({
+        bin: ytdlp.bin,
+        url: sourceUrl,
+        outDir: join(workDir, "dl"),
+        ffmpegBin: bins.ffmpeg,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      throw new Error(msg.includes("资产库") ? msg : DOWNLOAD_FAIL);
+    }
     title = dl.title.replace(/\s+/g, " ").slice(0, 40) || title;
     const ext = dl.file.split(".").pop()?.toLowerCase() || "mp4";
     const asset = storeAsset({
@@ -127,7 +135,7 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
     throw new Error("请粘贴视频链接，或从资产库选一条视频");
   }
 
-  if (!existsSync(videoAbs)) throw new Error("视频文件不存在");
+  if (!existsSync(videoAbs)) throw new Error("视频文件不存在。重新导入到资产库后再试。");
 
   ctx.progress(0.35, "看时长和画面");
   const bins = await detectBins();

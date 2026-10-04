@@ -3,3 +3,11 @@ dist/
 .DS_Store
 *.log
 .data/
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+.secret
+.video-workbench/

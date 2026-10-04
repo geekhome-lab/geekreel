@@ -1,13 +1,27 @@
 import { Hono } from "hono";
-import { getAdapter, listAdapters, type Capability } from "@vw/models";
+import {
+  FAMILY_LABELS,
+  VOICE_FAMILIES,
+  getAdapter,
+  listAdapters,
+  missingUnitPrice,
+  voiceFamilyOf,
+  voicesForConfig,
+  voicesForFamily,
+  type Capability,
+  type VoiceFamily,
+} from "@vw/models";
 import { err, ok } from "../lib/resp";
 import {
+  applyChannelPrices,
+  attachChannelPrices,
   createEndpoint,
   deleteEndpoint,
   getEndpoint,
   importFromEnv,
   listEndpoints,
   setDefaultEndpoint,
+  syncChannelPrices,
   updateEndpoint,
 } from "../services/models";
 import { usageSummary } from "../services/usage";
@@ -32,7 +46,7 @@ modelsRoutes.get("/endpoints", (c) => {
   return ok(c, listEndpoints(capability));
 });
 
-modelsRoutes.post("/import-env", (c) => ok(c, importFromEnv()));
+modelsRoutes.post("/import-env", async (c) => ok(c, await importFromEnv()));
 
 modelsRoutes.post("/endpoints", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -61,7 +75,8 @@ modelsRoutes.post("/endpoints", async (c) => {
     webSearch: body.webSearch,
     vision: body.vision,
   });
-  return ok(c, ep);
+  const priceStatus = missingUnitPrice(ep) ? await attachChannelPrices(ep.id) : { ok: true as const };
+  return ok(c, { ...getEndpoint(ep.id)!, priceStatus });
 });
 
 modelsRoutes.patch("/endpoints/:id", async (c) => {
@@ -74,7 +89,9 @@ modelsRoutes.patch("/endpoints/:id", async (c) => {
   };
   const ep = updateEndpoint(c.req.param("id"), body);
   if (!ep) return err(c, "端点不存在", 404);
-  return ok(c, ep);
+  const fresh = getEndpoint(ep.id)!;
+  const priceStatus = missingUnitPrice(fresh) ? await attachChannelPrices(ep.id) : { ok: true as const };
+  return ok(c, { ...getEndpoint(ep.id)!, priceStatus });
 });
 
 modelsRoutes.delete("/endpoints/:id", (c) => {
@@ -88,6 +105,17 @@ modelsRoutes.post("/endpoints/:id/default", (c) => {
   return ok(c, ep);
 });
 
+modelsRoutes.post("/prices/sync", async (c) => ok(c, await syncChannelPrices()));
+
+modelsRoutes.post("/endpoints/:id/prices", async (c) => {
+  try {
+    return ok(c, await applyChannelPrices(c.req.param("id")));
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return err(c, msg, msg === "端点不存在" ? 404 : 400);
+  }
+});
+
 /** 连通性测试 */
 modelsRoutes.post("/endpoints/:id/test", async (c) => {
   const ep = getEndpoint(c.req.param("id"), true);
@@ -96,6 +124,43 @@ modelsRoutes.post("/endpoints/:id/test", async (c) => {
   if (!adapter) return err(c, "适配器不存在", 500);
   const result = await adapter.test(ep.config);
   return ok(c, result);
+});
+
+modelsRoutes.get("/voices", (c) => {
+  const wanted = c.req.query("endpointId");
+  const wantedFamily = c.req.query("family") as VoiceFamily | undefined;
+  const list = listEndpoints("tts").filter((e) => e.enabled);
+  const families = VOICE_FAMILIES.map((f) => {
+    const match = list.find((e) => voiceFamilyOf(e.config) === f.id);
+    return {
+      id: f.id,
+      name: f.name,
+      voices: voicesForFamily(f.id),
+      endpointId: match?.id ?? null,
+      endpointName: match?.name ?? null,
+    };
+  });
+  const selected =
+    (wanted && list.find((e) => e.id === wanted)) ||
+    (wantedFamily && list.find((e) => voiceFamilyOf(e.config) === wantedFamily)) ||
+    list.find((e) => e.isDefault) ||
+    list[0] ||
+    null;
+  const family = selected ? voiceFamilyOf(selected.config) : wantedFamily && wantedFamily !== "generic" ? wantedFamily : "qwen";
+  return ok(c, {
+    endpointId: selected?.id ?? null,
+    endpointName: selected?.name ?? null,
+    family,
+    voices: selected ? voicesForConfig(selected.config) : voicesForFamily(family === "generic" ? "qwen" : family),
+    families,
+    endpoints: list.map((e) => ({
+      id: e.id,
+      name: e.name,
+      family: voiceFamilyOf(e.config),
+      familyName: FAMILY_LABELS[voiceFamilyOf(e.config)],
+      voiceCount: voicesForConfig(e.config).length,
+    })),
+  });
 });
 
 modelsRoutes.get("/usage", (c) => {

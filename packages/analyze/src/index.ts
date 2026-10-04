@@ -1,6 +1,5 @@
 /**
- * @vw/analyze —— yt-dlp 探测/下载、抽帧、报告解析。
- * 不内置爬虫：下载走 yt-dlp，分析走用户配置的文本模型。
+ * @vw/analyze —— 读公开页文案、解析报告。链接分析不下视频。
  */
 
 import {
@@ -20,18 +19,24 @@ import { dirname, join } from "node:path";
 import type { AnalysisReportDoc, RemakeTemplateDoc } from "@vw/core";
 import { runFfmpeg } from "@vw/media";
 
+export type { VideoCopy } from "./copy";
+export { dumpYtdlpMeta, extractCopyFromHtml, extractDouyinId, extractHashtags, fetchVideoCopy } from "./copy";
+
 export const ANALYZE_SYSTEM =
-  "你是短视频拆解教练。根据提供的素材信息做结构化分析，不要编造具体台词（没有转写就写「未见转写」）。如果附带了抽帧图片，必须根据画面写 visual，不要只靠时刻表瞎猜。只输出 JSON。";
+  "你是短视频拆解教练。根据抽帧画面和转写做结构化分析，不要编造具体台词（没有转写就写「未见转写」）。如果附带了抽帧图片，必须根据画面写 visual，不要只靠时刻表瞎猜。只输出 JSON。";
 
 export function analysisPrompt(input: {
   title: string;
   durationMs: number;
-  frames: Array<{ tMs: number }>;
-  transcript: string | null;
+  frames?: Array<{ tMs: number }>;
+  transcript?: string | null;
   sourceUrl: string | null;
   withImages?: boolean;
+  description?: string;
+  author?: string | null;
+  tags?: string[];
 }): string {
-  const frameList = input.frames.map((f) => `${(f.tMs / 1000).toFixed(1)}s`).join(", ");
+  const frameList = (input.frames ?? []).map((f) => `${(f.tMs / 1000).toFixed(1)}s`).join(", ");
   return `请拆解这条短视频，输出 JSON：
 {"title":"作品名","hook":{"startMs":0,"endMs":3000,"summary":"前3秒钩子"},"structure":[{"name":"钩子|展开|高潮|CTA","startMs":0,"endMs":0,"note":""}],"shots":[{"startMs":0,"endMs":0,"visual":"画面","line":"台词或未见转写"}],"rhythm":{"shotCount":0,"avgShotMs":0,"wordsPerSec":null,"note":""},"viralFactors":["留人技巧1","情绪点"],"template":{"name":"可复用结构名","variables":["主题","产品","人物设定"],"slots":[{"id":"hook","maxSec":3,"shotDesc":"画面槽","lineSlot":"台词槽"}]}}
 
@@ -40,8 +45,8 @@ export function analysisPrompt(input: {
 时长：${(input.durationMs / 1000).toFixed(1)} 秒
 链接：${input.sourceUrl ?? "本地文件"}
 抽帧时刻：${frameList || "无"}
-${input.withImages ? "已附上对应时刻的画面截图，请按图描述 visual。" : "没有附带画面，只根据时长和抽帧节奏推断结构。"}
-转写：${input.transcript?.trim() || "（无转写，台词写未见转写）"}`;
+${input.withImages ? "已附上对应时刻的画面截图，请按图描述 visual。" : "没有附带画面，只根据时长、抽帧时刻和转写推断结构。"}
+转写：${input.transcript?.trim() || input.description?.trim() || "（无转写，台词写未见转写）"}`;
 }
 
 export function parseAnalysisReport(text: string): AnalysisReportDoc {
@@ -277,8 +282,8 @@ export async function downloadWithYtdlp(opts: {
   const code = await proc.exited;
   if (code !== 0) {
     const hint = /private|login|cookie|403|unavailable/i.test(stderr)
-      ? "这条链可能要登录或已失效。先把视频保存下来，导入「资产库」再分析。"
-      : "下载失败。换一条公开链接，或把视频导入资产库。";
+      ? "这条链拉不下来（平台要登录或已失效）。把视频保存到本地，导入「资产库」，点开后用「复刻爆款视频」。"
+      : "下载失败。换一条公开链接，或把视频导入「资产库」后点「复刻爆款视频」。";
     throw new Error(hint);
   }
   const lines = stdout.trim().split("\n").map((l) => l.trim()).filter(Boolean);

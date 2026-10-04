@@ -16,11 +16,12 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, Job, PipelineRun } from "@vw/core";
+import { extractDialogue, type Asset, type Job, type PipelineRun } from "@vw/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { submitFfmpeg, submitImageGen, submitTts, submitVideoGen, waitForJob } from "../lib/runGen";
+import { api, apiJson } from "../lib/api";
+import { submitFfmpeg, submitImageGen, submitTimelineFinish, submitTts, submitVideoGen, waitForJob } from "../lib/runGen";
+import { usePrefs } from "../lib/prefs";
 import { iconPlus } from "../lib/icons";
 import { CanvasActionsContext } from "../components/canvas/canvasContext";
 import { TextNode, type TextNodeData } from "../components/canvas/textNode";
@@ -72,6 +73,8 @@ function newNodeId() {
   return `n${Date.now().toString(36)}_${nodeSeq++}`;
 }
 
+let homeShootRunning: string | null = null;
+
 function CanvasInner(props: { projectId: string }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
@@ -88,6 +91,15 @@ function CanvasInner(props: { projectId: string }) {
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [runningIds, setRunningIds] = useState<Set<string>>(new Set());
+  const [homeShoot, setHomeShoot] = useState(
+    () =>
+      useAppStore.getState().pendingAutoRun ||
+      sessionStorage.getItem("vw.autoDub") === props.projectId ||
+      sessionStorage.getItem("vw.autoRun") === props.projectId,
+  );
+  const [homeShootNote, setHomeShootNote] = useState("");
+  const liveJobs = useAppStore((s) => s.liveJobs);
+  const autoSubtitles = usePrefs((s) => s.autoSubtitles);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const viewportRef = useRef<CanvasDoc["viewport"]>(null);
 
@@ -304,7 +316,7 @@ function CanvasInner(props: { projectId: string }) {
                 endpointId: data.endpointId,
                 projectId: props.projectId,
                 imageAssetId: incomingImage || undefined,
-                dialogue: /「([^」]+)」/.exec(prompt)?.[1],
+                dialogue: data.line?.trim() || extractDialogue(prompt) || undefined,
               });
             } else if (node.type === "ttsNode") {
               const data = node.data as TtsNodeData;
@@ -367,25 +379,80 @@ function CanvasInner(props: { projectId: string }) {
     [runNode, pickAsset, runningIds],
   );
 
-  // 首页对话跳转后的自动运行：把所有文生图节点按顺序跑一遍
-  const autoRunFired = useRef(false);
+  // 首页出片：出完视频后服务端会排队配音。这里只负责把视频跑完，并盯配音进度。
   useEffect(() => {
-    if (!loaded || autoRunFired.current) return;
-    if (!useAppStore.getState().pendingAutoRun) return;
-    autoRunFired.current = true;
+    if (!loaded) return;
+    const pid = props.projectId;
+    const should =
+      useAppStore.getState().pendingAutoRun ||
+      sessionStorage.getItem("vw.autoRun") === pid ||
+      sessionStorage.getItem("vw.autoDub") === pid;
+    if (!should) return;
+    if (homeShootRunning === pid) return;
+    homeShootRunning = pid;
     useAppStore.getState().setPendingAutoRun(false);
-    const genIds = nodes.filter((n) => n.type === "imageGenNode" || n.type === "videoGenNode" || n.type === "ttsNode").map((n) => n.id);
+    sessionStorage.removeItem("vw.autoRun");
+    setHomeShoot(true);
+    const videoIds = nodes.filter((n) => n.type === "videoGenNode").map((n) => n.id);
     void (async () => {
-      for (const id of genIds) {
+      let made = 0;
+      for (const id of videoIds) {
         try {
           await runNode(id);
+          if ((getNodes().find((n) => n.id === id)?.data as { assetId?: string } | undefined)?.assetId) made += 1;
         } catch {
-          // 单节点失败不阻塞后续节点
+          /* 单镜失败不阻塞 */
         }
+      }
+      const latest = getNodes();
+      const edgesNow = getEdges();
+      if (canvasMeta) {
+        try {
+          await apiJson(`/api/canvas/${canvasMeta.id}`, "put", {
+            doc: { version: 1, nodes: latest, edges: edgesNow, viewport: viewportRef.current },
+          });
+        } catch {
+          /* 防抖保存兜底 */
+        }
+      }
+      if (made === 0) {
+        setHomeShootNote("视频还没出成，先在节点上重跑。出完会装字幕，配音到时间线选。");
+        homeShootRunning = null;
+        return;
+      }
+      setHomeShootNote("视频齐了，在装字幕…");
+      try {
+        const job = await submitTimelineFinish(pid, { withSubtitles: usePrefs.getState().autoSubtitles, dub: false });
+        await waitForJob(job.id, 15 * 60_000);
+      } catch (e) {
+        homeShootRunning = null;
+        setHomeShootNote(e instanceof Error ? e.message : "字幕没装上，可到时间线再试");
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loaded]);
+  }, [loaded, props.projectId]);
+
+  useEffect(() => {
+    const finish = Object.values(liveJobs).find(
+      (j) => j.projectId === props.projectId && j.type === "timeline.finish",
+    );
+    if (!finish) return;
+    if (finish.status === "running" || finish.status === "queued") {
+      setHomeShoot(true);
+      setHomeShootNote(finish.message || "正在装画面和字幕…");
+    }
+    if (finish.status === "done") {
+      sessionStorage.removeItem("vw.autoDub");
+      homeShootRunning = null;
+      setHomeShootNote("画面和字幕齐了，去时间线选音色");
+      navigate("/timeline");
+    }
+    if (finish.status === "failed") {
+      homeShootRunning = null;
+      setHomeShoot(true);
+      setHomeShootNote(finish.error || "没装上，可到时间线再试");
+    }
+  }, [liveJobs, navigate, props.projectId]);
 
   if (!loaded) {
     return <div className="flex h-full items-center justify-center text-sm text-fg-faint">画布加载中…</div>;
@@ -394,6 +461,16 @@ function CanvasInner(props: { projectId: string }) {
   return (
     <CanvasActionsContext.Provider value={actions}>
       <div className="relative h-full">
+        {homeShoot && !waiting && (
+          <div className="absolute top-14 left-3 z-10 max-w-md rounded-xl border border-accent-dim bg-panel/95 p-3 text-xs shadow-xl">
+            <div className="mb-1 font-medium text-accent">正在出片</div>
+            <p className="text-fg-dim">先出视频。全部出完会装字幕，配音到时间线里选音色。</p>
+            {homeShootNote ? <p className="mt-1 text-amber-300">{homeShootNote}</p> : null}
+            <button className="mt-2 text-[11px] text-fg-faint underline" onClick={() => setHomeShoot(false)}>
+              知道了
+            </button>
+          </div>
+        )}
         {waiting && (
           <div className="absolute top-14 left-3 z-10 max-w-lg rounded-xl border border-accent-dim bg-panel/95 p-3 text-xs shadow-xl">
             {waiting.currentStep === "cast" ? (
@@ -466,7 +543,10 @@ function CanvasInner(props: { projectId: string }) {
             className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim hover:text-fg"
             onClick={async () => {
               try {
-                const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId: props.projectId });
+                const job = await apiJson<Job>("/api/pipelines/render-episode", "post", {
+                  projectId: props.projectId,
+                  withSubtitles: autoSubtitles,
+                });
                 await waitForJob(job.id, 20 * 60_000);
                 navigate("/timeline");
               } catch (e) {
@@ -480,7 +560,15 @@ function CanvasInner(props: { projectId: string }) {
             className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black hover:brightness-110"
             onClick={async () => {
               try {
-                await apiJson(`/api/timeline/project/${props.projectId}/from-canvas`, "post");
+                const latest = getNodes();
+                const edgesNow = getEdges();
+                if (canvasMeta) {
+                  await apiJson(`/api/canvas/${canvasMeta.id}`, "put", {
+                    doc: { version: 1, nodes: latest, edges: edgesNow, viewport: viewportRef.current },
+                  });
+                }
+                const job = await submitTimelineFinish(props.projectId, { withSubtitles: autoSubtitles, dub: false });
+                await waitForJob(job.id, 15 * 60_000);
                 navigate("/timeline");
               } catch (e) {
                 alert(e instanceof Error ? e.message : String(e));

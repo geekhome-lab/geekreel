@@ -14,11 +14,12 @@ import {
   getSource,
   hasFeedSources,
   hasWebSearchLlm,
+  listBoardSources,
   listItems,
   listSources,
   radarTrend,
   listSubs,
-  projectFromItem,
+  storyFromItem,
   saveRadarSettings,
   updateSource,
   updateSub,
@@ -43,7 +44,7 @@ radarRoutes.get("/intervals", (c) => ok(c, intervalPresets));
 radarRoutes.get("/board", (c) => {
   const platform = c.req.query("platform") || undefined;
   const q = c.req.query("q") || undefined;
-  return ok(c, listItems({ platform, q, limit: 80 }));
+  return ok(c, listItems({ platform, q, limit: 120, boardOnly: true }));
 });
 
 radarRoutes.get("/trend", (c) => ok(c, radarTrend(14)));
@@ -54,7 +55,10 @@ radarRoutes.get("/items/:id", (c) => {
   return ok(c, item);
 });
 
-radarRoutes.get("/sources", (c) => ok(c, listSources()));
+radarRoutes.get("/sources", (c) => {
+  if (c.req.query("board") === "1") return ok(c, listBoardSources());
+  return ok(c, listSources());
+});
 
 radarRoutes.post("/sources", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
@@ -92,13 +96,15 @@ radarRoutes.delete("/sources/:id", (c) => {
   return ok(c, { deleted: true });
 });
 
-radarRoutes.post("/sources/:id/run", (c) => {
+radarRoutes.post("/sources/:id/run", async (c) => {
   const src = getSource(c.req.param("id"));
   if (!src) return err(c, "观察源不存在", 404);
   if (src.kind === "ai-query" && !hasWebSearchLlm() && !src.endpointId) {
     return err(c, "还没有会联网的文本模型。到「模型」页添加一个，并勾选「支持联网搜索」。", 422);
   }
-  const job = jobQueue.submit("radar.fetch", { sourceId: src.id });
+  const body = (await c.req.json().catch(() => ({}))) as { q?: string };
+  const q = body.q?.trim() || undefined;
+  const job = jobQueue.submit("radar.fetch", { sourceId: src.id, q });
   return ok(c, job);
 });
 
@@ -155,11 +161,22 @@ radarRoutes.put("/settings", async (c) => {
   return ok(c, saveRadarSettings(body));
 });
 
+radarRoutes.post("/to-story", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { itemId?: string };
+  if (!body.itemId) return err(c, "缺少热点");
+  try {
+    return ok(c, await storyFromItem(body.itemId));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e));
+  }
+});
+
+/** 旧入口：同样只提炼想法，不再直接出片 */
 radarRoutes.post("/to-project", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { itemId?: string };
   if (!body.itemId) return err(c, "缺少热点");
   try {
-    return ok(c, projectFromItem(body.itemId));
+    return ok(c, await storyFromItem(body.itemId));
   } catch (e) {
     return err(c, e instanceof Error ? e.message : String(e));
   }

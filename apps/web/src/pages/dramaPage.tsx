@@ -3,6 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CharacterDossier, DramaBible, Job, PipelineRun, Series, StoryEvent } from "@vw/core";
 import { api, apiJson } from "../lib/api";
+import { usePrefs } from "../lib/prefs";
 import { useAppStore } from "../lib/store";
 import { waitForJob } from "../lib/runGen";
 import { iconPlay, iconUpload } from "../lib/icons";
@@ -17,6 +18,7 @@ export function DramaPage() {
   const [params, setParams] = useSearchParams();
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const setPendingAutoRun = useAppStore((s) => s.setPendingAutoRun);
+  const autoSubtitles = usePrefs((s) => s.autoSubtitles);
 
   const { data: seriesList } = useQuery({
     queryKey: ["series"],
@@ -143,7 +145,7 @@ export function DramaPage() {
     <div className="mx-auto h-full max-w-3xl overflow-y-auto p-6">
       <h1 className="text-lg font-semibold">小说转短剧</h1>
       <p className="mt-1 mb-5 text-xs text-fg-faint">
-        上传小说或贴能打开的链接。点做成连载后，先通读全文、列出人物档案和每章事件。不满意就点那一张，对话改。
+        上传小说或贴能打开的链接。列出人物和事件后，下面有对话框能整份改，比如「全部改成中文」。单条仍可点开改。
       </p>
 
       {!reviewing && (
@@ -206,6 +208,31 @@ export function DramaPage() {
             </div>
           )}
 
+          {story.trim() && (
+            <DramaChatBox
+              placeholder="比如：翻成中文，人名也译过来"
+              button="按这句话改正文"
+              busy={busy}
+              onSubmit={async (instruction) => {
+                setBusy(true);
+                setError("");
+                try {
+                  const next = await apiJson<{ text: string; clipped: boolean }>("/api/series/rewrite", "post", {
+                    text: story,
+                    instruction,
+                  });
+                  setStory(next.text);
+                  setClipped(next.clipped);
+                  setSource("paste");
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            />
+          )}
+
           <section className="mb-4">
             <h2 className="mb-2 text-xs text-fg-faint">连载</h2>
             <div className="mb-2 flex gap-2">
@@ -248,12 +275,36 @@ export function DramaPage() {
         </>
       )}
 
-      {reviewing && bible && (
-        <CastReview
-          bible={bible}
-          locked={seriesMode === "continue"}
-          onEdit={(kind, id) => setEditing({ kind, id })}
-        />
+      {reviewing && bible && pipe && (
+        <>
+          <CastReview
+            bible={bible}
+            locked={seriesMode === "continue"}
+            onEdit={(kind, id) => setEditing({ kind, id })}
+          />
+          <DramaChatBox
+            placeholder="比如：全部改成中文 / 事件压成 8 条 / 人物用本名"
+            button="按这句话改整份"
+            busy={busy}
+            onSubmit={async (instruction) => {
+              setBusy(true);
+              setError("");
+              try {
+                const next = await apiJson<DramaBible>(`/api/pipelines/${pipe.id}/revise`, "post", {
+                  target: "all",
+                  instruction,
+                });
+                qc.setQueryData(["pipeline", pipe.id], (old: PipelineRun | undefined) =>
+                  old ? { ...old, bible: next } : old,
+                );
+              } catch (e) {
+                setError(e instanceof Error ? e.message : String(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          />
+        </>
       )}
 
       {error && <p className="mb-3 text-xs text-amber-300">{error}</p>}
@@ -285,7 +336,10 @@ export function DramaPage() {
                 setBusy(true);
                 setError("");
                 try {
-                  const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId: pipe.projectId });
+                  const job = await apiJson<Job>("/api/pipelines/render-episode", "post", {
+                    projectId: pipe.projectId,
+                    withSubtitles: autoSubtitles,
+                  });
                   await waitForJob(job.id, 20 * 60_000);
                   setCurrentProject(pipe.projectId);
                   navigate("/timeline");
@@ -359,7 +413,7 @@ function CastReview(props: {
     <div className="mb-5 space-y-5">
       <div>
         <h2 className="text-base font-medium">{props.bible.title}</h2>
-        <p className="text-[11px] text-fg-faint">点卡片就能改这一条。改完满意再往下走。</p>
+        <p className="text-[11px] text-fg-faint">下面对话框能整份改。点卡片只改这一条。</p>
       </div>
       <section>
         <h3 className="mb-2 text-xs text-fg-faint">出场人物{props.locked ? "（沿用上集，仍可点开微调）" : ""}</h3>
@@ -496,6 +550,49 @@ function ReviseDialog(props: {
         </button>
       </div>
     </Modal>
+  );
+}
+
+function DramaChatBox(props: {
+  placeholder: string;
+  button: string;
+  busy: boolean;
+  onSubmit: (instruction: string) => Promise<void>;
+}) {
+  const [text, setText] = useState("");
+  const send = async () => {
+    const instruction = text.trim();
+    if (!instruction || props.busy) return;
+    await props.onSubmit(instruction);
+    setText("");
+  };
+  return (
+    <div className="mb-4 rounded-xl border border-line bg-panel p-3">
+      <textarea
+        rows={3}
+        className="w-full resize-y rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+        placeholder={props.placeholder}
+        value={text}
+        disabled={props.busy}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+            e.preventDefault();
+            void send();
+          }
+        }}
+      />
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-[10px] text-fg-faint">⌘ / Ctrl + Enter</span>
+        <button
+          className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40"
+          disabled={props.busy || !text.trim()}
+          onClick={() => void send()}
+        >
+          {props.busy ? "在改…" : props.button}
+        </button>
+      </div>
+    </div>
   );
 }
 

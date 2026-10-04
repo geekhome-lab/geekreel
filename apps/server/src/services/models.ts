@@ -1,6 +1,7 @@
-import type { Capability, ModelEndpoint } from "@vw/models";
+import { fetchChannelPrices, hasAnyPrice, missingUnitPrice, type Capability, type ModelEndpoint, type PriceQuote } from "@vw/models";
+import { recomputeUsageCosts } from "./usage";
 import { db } from "../db";
-import { decrypt, encrypt, maskSecret } from "../lib/crypto";
+import { decrypt, encrypt, isPlaceholderSecret, maskSecret } from "../lib/crypto";
 import { newId, now } from "../lib/resp";
 
 /**
@@ -99,29 +100,29 @@ export function updateEndpoint(
   const existing = getEndpoint(id, true);
   if (!existing) return null;
 
-  const config = { ...existing.config, ...patch.config };
-  // apiKey 留空表示不修改；传入新值则重新加密
-  if (patch.config && "apiKey" in patch.config) {
-    if (patch.config.apiKey) {
-      config.apiKeyEnc = encrypt(patch.config.apiKey);
-      delete config.apiKey;
-    } else {
-      delete config.apiKey;
-    }
-  } else if (existing.config.apiKey) {
+  const raw = db.query("SELECT configJson FROM model_endpoints WHERE id = ?").get(id) as { configJson: string } | null;
+  const stored = raw ? (JSON.parse(raw.configJson) as Record<string, string>) : {};
+  const incoming = { ...(patch.config ?? {}) };
+  const config = { ...stored, ...existing.config, ...incoming };
+  delete config.apiKey;
+  delete config.secretKey;
+
+  const nextApi = incoming.apiKey;
+  if (!isPlaceholderSecret(nextApi)) {
+    config.apiKeyEnc = encrypt(nextApi!.trim());
+  } else if (stored.apiKeyEnc) {
+    config.apiKeyEnc = stored.apiKeyEnc;
+  } else if (existing.config.apiKey && !isPlaceholderSecret(existing.config.apiKey)) {
     config.apiKeyEnc = encrypt(existing.config.apiKey);
-    delete config.apiKey;
   }
-  if (patch.config && "secretKey" in patch.config) {
-    if (patch.config.secretKey) {
-      config.secretKeyEnc = encrypt(patch.config.secretKey);
-      delete config.secretKey;
-    } else {
-      delete config.secretKey;
-    }
-  } else if (existing.config.secretKey) {
+
+  const nextSecret = incoming.secretKey;
+  if (!isPlaceholderSecret(nextSecret)) {
+    config.secretKeyEnc = encrypt(nextSecret!.trim());
+  } else if (stored.secretKeyEnc) {
+    config.secretKeyEnc = stored.secretKeyEnc;
+  } else if (existing.config.secretKey && !isPlaceholderSecret(existing.config.secretKey)) {
     config.secretKeyEnc = encrypt(existing.config.secretKey);
-    delete config.secretKey;
   }
 
   db.run(
@@ -152,7 +153,7 @@ export function setDefaultEndpoint(id: string): ModelEndpoint | null {
 }
 
 /** 能力路由：优先指定端点，否则用该能力默认端点 */
-export function importFromEnv(): { created: string[]; skipped: string[] } {
+export async function importFromEnv(): Promise<{ created: string[]; skipped: string[] }> {
   const key = (process.env.VW_API_KEY || process.env.OPENAI_API_KEY || "").trim();
   const baseUrl = (process.env.VW_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").trim();
   const created: string[] = [];
@@ -179,9 +180,53 @@ export function importFromEnv(): { created: string[]; skipped: string[] } {
       vision: spec.vision,
     });
     if (!listEndpoints(spec.capability).some((e) => e.isDefault)) setDefaultEndpoint(ep.id);
+    await attachChannelPrices(ep.id);
     created.push(spec.name);
   }
   return { created, skipped };
+}
+
+export async function attachChannelPrices(
+  id: string,
+): Promise<{ ok: true; quote: PriceQuote } | { ok: false; reason: string }> {
+  try {
+    const { quote } = await applyChannelPrices(id);
+    return { ok: true, quote };
+  } catch (e) {
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function applyChannelPrices(id: string): Promise<{ quote: PriceQuote; recomputed: number }> {
+  const ep = getEndpoint(id, true);
+  if (!ep) throw new Error("端点不存在");
+  const quote = await fetchChannelPrices(ep.config);
+  const prices: Record<string, string> = {};
+  for (const key of ["priceInput", "priceOutput", "priceImage", "priceTts", "priceVideo"] as const) {
+    if (quote[key]) prices[key] = quote[key]!;
+  }
+  if (!hasAnyPrice(prices)) throw new Error("渠道没有返回单价");
+  const updated = updateEndpoint(id, { config: prices });
+  if (!updated) throw new Error("写入单价失败");
+  const recomputed = recomputeUsageCosts(id, { ...ep.config, ...prices });
+  return { quote, recomputed };
+}
+
+export async function syncChannelPrices(): Promise<{
+  filled: Array<{ id: string; name: string; model: string; source: string }>;
+  skipped: Array<{ id: string; name: string; reason: string }>;
+}> {
+  const filled: Array<{ id: string; name: string; model: string; source: string }> = [];
+  const skipped: Array<{ id: string; name: string; reason: string }> = [];
+  for (const ep of listEndpoints()) {
+    try {
+      const { quote } = await applyChannelPrices(ep.id);
+      filled.push({ id: ep.id, name: ep.name, model: quote.model, source: quote.source });
+    } catch (e) {
+      skipped.push({ id: ep.id, name: ep.name, reason: e instanceof Error ? e.message : String(e) });
+    }
+  }
+  return { filled, skipped };
 }
 
 export function resolveEndpoint(capability: Capability, preferredId?: string): ModelEndpoint | null {

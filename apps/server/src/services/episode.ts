@@ -7,6 +7,7 @@ import { lockCastIntoPrompt, pickCastImageIds, shotDurationSec } from "@vw/pipel
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { now } from "../lib/resp";
+import { speakOne } from "./dub";
 import { absInLibrary, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
 import { recordUsage } from "./usage";
@@ -39,6 +40,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
     videoEndpointId?: string;
     imageEndpointId?: string;
     ttsEndpointId?: string;
+    withSubtitles?: boolean;
   };
   const projectId = payload.projectId ?? job.projectId;
   if (!projectId) throw new Error("缺少项目");
@@ -55,7 +57,6 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
   const ttsEp = resolveEndpoint("tts", payload.ttsEndpointId);
   const imageAd = imageEp ? getAdapter(imageEp.adapterType) : null;
   const videoAd = videoEp ? getAdapter(videoEp.adapterType) : null;
-  const ttsAd = ttsEp ? getAdapter(ttsEp.adapterType) : null;
   if (!imageAd?.generateImage && !videoAd?.generateVideo) {
     throw new Error("出集至少要有图片或视频模型。到「模型」页加上再来。");
   }
@@ -168,26 +169,13 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       }
     }
 
-    if (shot.line && !lipSynced) {
+    if (shot.line.trim() && !lipSynced) {
       lipsMissed += 1;
-      lipsNote = "这镜没对上嘴，先用定妆加配音。换一个会对口型的视频模型再出一次。";
-      if (ttsAd?.generateSpeech && ttsEp) {
-        try {
-          const speech = await ttsAd.generateSpeech(ttsEp.config, { text: shot.line, signal: ctx.signal });
-          const audio = storeAsset({
-            type: "audio",
-            title: shot.line.slice(0, 16) || "配音",
-            ext: speech.mime.includes("wav") ? "wav" : "mp3",
-            source: "pipeline",
-            projectId,
-            data: speech.data,
-          });
-          recordUsage({ endpoint: ttsEp, projectId, jobType: "pipeline.episode", audioChars: shot.line.length });
-          audioAssetId = audio.id;
-        } catch {
-          /* 没配音也能先看画面 */
-        }
-      }
+      lipsNote = "这镜没对上嘴，先用定妆加配音。时间线里可再对一下。";
+    }
+    if (shot.line.trim()) {
+      const spoken = await speakOne(shot.line, { projectId, endpoint: ttsEp, signal: ctx.signal });
+      if (spoken) audioAssetId = spoken.assetId;
     }
 
     if (!videoAssetId && !imageAssetId) {
@@ -212,8 +200,10 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
         outMs: durMs,
         volume: 1,
       });
+      const lastV = vTrack.clips.at(-1);
+      if (lastV) lastV.volume = 0;
     }
-    if (shot.line.trim()) {
+    if (shot.line.trim() && payload.withSubtitles !== false) {
       sTrack.clips.push({
         id: `c_s_${i}`,
         text: shot.line.trim(),
@@ -270,7 +260,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
   mkdirSync(join(directory, "timeline"), { recursive: true });
   writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(doc, null, 2));
 
-  ctx.progress(1, lipsMissed ? `${lipsMissed} 镜没对上嘴，先能看` : "竖屏这一集已装上时间线");
+  ctx.progress(1, lipsMissed ? `${lipsMissed} 镜已配音，时间线可微调` : "这一集已装上时间线，已配音");
   return {
     projectId,
     episodeIndex: ep.index,

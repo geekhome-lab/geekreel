@@ -1,13 +1,34 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { clipDuration, type TimelineDoc } from "@vw/core";
-import { getAdapter } from "@vw/models";
+import { getAdapter, wanVideoChunks } from "@vw/models";
+import { injectImagePrompt } from "@vw/style";
 import { burnCaption, concatVideos, cropAspect, detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
+import { maybeEnqueueFinish } from "./dub";
 import { resolveEndpoint } from "./models";
-import { absInLibrary, storeAsset } from "./library";
+import { absInLibrary, replaceAssetContent, storeAsset } from "./library";
+import { loadPack } from "./styles";
 import { recordUsage } from "./usage";
+
+function projectPack(projectId?: string | null) {
+  if (!projectId) return null;
+  const row = db.query("SELECT stylePackId FROM projects WHERE id = ?").get(projectId) as { stylePackId: string | null } | null;
+  return row?.stylePackId ? loadPack(row.stylePackId) : null;
+}
+
+function isHandDrawnPack(pack: ReturnType<typeof loadPack>): boolean {
+  if (!pack) return false;
+  return pack.public.id === "whiteboard" || /白板|手绘|线稿|示意图/.test(`${pack.public.name}\n${pack.styleBlock}`);
+}
+
+function applyProjectStyle(prompt: string, projectId?: string | null): string {
+  const pack = projectPack(projectId);
+  if (!pack?.styleBlock) return prompt;
+  if (prompt.includes(pack.styleBlock.slice(0, 24))) return prompt;
+  return injectImagePrompt({ pack, raw: prompt });
+}
 
 /**
  * gen.image：文生图任务。
@@ -20,8 +41,11 @@ export const genImageHandler: JobHandler = async (job, ctx) => {
     size?: string;
     endpointId?: string;
     projectId?: string;
+    replaceAssetId?: string;
   };
   if (!payload.prompt?.trim()) throw new Error("缺少提示词");
+  const projectId = payload.projectId ?? job.projectId;
+  const prompt = applyProjectStyle(payload.prompt.trim(), projectId);
 
   ctx.progress(0.05, "解析模型端点");
   const endpoint = resolveEndpoint("image", payload.endpointId);
@@ -31,24 +55,25 @@ export const genImageHandler: JobHandler = async (job, ctx) => {
 
   ctx.progress(0.15, `调用 ${endpoint.name}`);
   const result = await adapter.generateImage(endpoint.config, {
-    prompt: payload.prompt,
+    prompt,
     size: payload.size,
     signal: ctx.signal,
   });
 
-  ctx.progress(0.85, "产物入库");
-  const title = payload.prompt.replace(/\s+/g, " ").slice(0, 24);
-  const asset = storeAsset({
-    type: "image",
-    title: title || "生成图片",
-    ext: "png",
-    source: "canvas",
-    projectId: payload.projectId ?? job.projectId,
-    data: result.data,
-  });
+  ctx.progress(0.85, payload.replaceAssetId ? "覆盖原来那张" : "产物入库");
+  const asset = payload.replaceAssetId
+    ? replaceAssetContent(payload.replaceAssetId, result.data)
+    : storeAsset({
+        type: "image",
+        title: prompt.replace(/\s+/g, " ").slice(0, 24) || "生成图片",
+        ext: "png",
+        source: "canvas",
+        projectId,
+        data: result.data,
+      });
   recordUsage({
     endpoint,
-    projectId: payload.projectId ?? job.projectId,
+    projectId,
     jobType: "gen.image",
     images: 1,
   });
@@ -62,6 +87,7 @@ export const genTtsHandler: JobHandler = async (job, ctx) => {
     text: string;
     endpointId?: string;
     projectId?: string;
+    voice?: string;
   };
   const text = payload.text?.trim();
   if (!text) throw new Error("先写要说的话");
@@ -73,7 +99,7 @@ export const genTtsHandler: JobHandler = async (job, ctx) => {
   if (!adapter?.generateSpeech) throw new Error("这个模型不会配音，换一个语音模型");
 
   ctx.progress(0.25, `正在配音 ${endpoint.name}`);
-  const speech = await adapter.generateSpeech(endpoint.config, { text, signal: ctx.signal });
+  const speech = await adapter.generateSpeech(endpoint.config, { text, voice: payload.voice, signal: ctx.signal });
   const ext = speech.mime.includes("wav") ? "wav" : "mp3";
   const asset = storeAsset({
     type: "audio",
@@ -188,8 +214,11 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     imageAssetId?: string;
     lastFrameAssetId?: string;
     dialogue?: string;
+    autoDub?: boolean;
   };
+  const projectId = payload.projectId ?? job.projectId;
   if (!payload.prompt?.trim()) throw new Error("缺少提示词");
+  const prompt = applyProjectStyle(payload.prompt.trim(), projectId);
   ctx.progress(0.05, "找视频模型");
   const endpoint = resolveEndpoint("video", payload.endpointId);
   if (!endpoint) throw new Error("还没有视频模型。到「模型」页加可灵、豆包或 OpenAI 兼容的视频端点。");
@@ -202,38 +231,95 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     if (!img) return undefined;
     return { mime: "image/png", data: new Uint8Array(readFileSync(absInLibrary(img.path))) };
   };
-  const image = readImage(payload.imageAssetId) ?? readImage(payload.lastFrameAssetId);
-  const lastFrame = payload.lastFrameAssetId && payload.lastFrameAssetId !== payload.imageAssetId
-    ? readImage(payload.lastFrameAssetId)
-    : undefined;
+  const pack = projectPack(projectId);
+  const skipRef = isHandDrawnPack(pack);
+  const image = skipRef ? undefined : (readImage(payload.imageAssetId) ?? readImage(payload.lastFrameAssetId));
+  const lastFrame = skipRef || !payload.lastFrameAssetId || payload.lastFrameAssetId === payload.imageAssetId
+    ? undefined
+    : readImage(payload.lastFrameAssetId);
   const dialogue = payload.dialogue?.trim() || undefined;
 
-  ctx.progress(0.15, `正在生成 ${endpoint.name}，可能要一两分钟`);
-  const result = await adapter.generateVideo(endpoint.config, {
-    prompt: payload.prompt,
-    durationSec: payload.durationSec || 5,
-    signal: ctx.signal,
-    image,
-    lastFrame,
-    dialogue,
-    audio: Boolean(dialogue),
-  });
-  const ext = result.mime.includes("webm") ? "webm" : "mp4";
+  const wantSec = payload.durationSec || 5;
+  const chunks = wanVideoChunks(endpoint.config.model ?? "", wantSec);
+  ctx.progress(0.15, `正在生成 ${endpoint.name}，${wantSec}秒${chunks.length > 1 ? `（模型一次最多 ${chunks[0]} 秒，会接成一段）` : ""}`);
+  const clips: Array<{ data: Uint8Array; mime: string; durationSec?: number }> = [];
+  for (let i = 0; i < chunks.length; i++) {
+    ctx.progress(0.15 + (i / chunks.length) * 0.6, chunks.length > 1 ? `第 ${i + 1}/${chunks.length} 段` : `正在生成 ${endpoint.name}`);
+    clips.push(
+      await adapter.generateVideo(endpoint.config, {
+        prompt,
+        durationSec: chunks[i],
+        signal: ctx.signal,
+        image,
+        lastFrame,
+        dialogue,
+        audio: Boolean(dialogue),
+      }),
+    );
+  }
+  let bytes = clips[0]!.data;
+  let mime = clips[0]!.mime;
+  if (clips.length > 1) {
+    ctx.progress(0.82, "把几段接成一条");
+    const bins = await detectBins();
+    if (!bins.ffmpeg) throw new Error("项目自带的 ffmpeg 找不到，接不上多段视频");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const tmp = mkdtempSync(join(tmpdir(), "vw-concat-"));
+    try {
+      let acc = join(tmp, "acc.mp4");
+      writeFileSync(acc, clips[0]!.data);
+      for (let i = 1; i < clips.length; i++) {
+        const next = join(tmp, `p${i}.mp4`);
+        const out = join(tmp, `o${i}.mp4`);
+        writeFileSync(next, clips[i]!.data);
+        await concatVideos(bins.ffmpeg, acc, next, out, ctx.signal);
+        acc = out;
+      }
+      bytes = new Uint8Array(readFileSync(acc));
+      mime = "video/mp4";
+    } finally {
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* 临时目录清不掉不影响产物 */
+      }
+    }
+  }
+  const ext = mime.includes("webm") ? "webm" : "mp4";
   const asset = storeAsset({
     type: "video",
-    title: payload.prompt.replace(/\s+/g, " ").slice(0, 24) || "生成视频",
+    title: prompt.replace(/\s+/g, " ").slice(0, 24) || "生成视频",
     ext,
     source: "canvas",
     projectId: payload.projectId ?? job.projectId,
-    data: result.data,
+    data: bytes,
   });
+  try {
+    const bins = await detectBins();
+    if (bins.ffprobe) {
+      const info = await probe(bins.ffprobe, absInLibrary(asset.path));
+      if (info?.durationMs) {
+        db.run("UPDATE assets SET durationMs = ? WHERE id = ?", [info.durationMs, asset.id]);
+      }
+    }
+  } catch {
+    /* 时长探测失败不影响入库 */
+  }
   recordUsage({
     endpoint,
     projectId: payload.projectId ?? job.projectId,
     jobType: "gen.video",
-    videoSec: result.durationSec ?? payload.durationSec ?? 5,
+    videoSec: wantSec,
   });
-  ctx.progress(1, "视频已入库");
+  if (projectId) {
+    try {
+      maybeEnqueueFinish(projectId);
+    } catch {
+      /* 配音排队失败不挡出片 */
+    }
+  }
+  ctx.progress(1, "视频已入库，够数了会装字幕");
   return { assetId: asset.id, endpointId: endpoint.id, lipSynced: Boolean(dialogue) && endpoint.adapterType === "openai-compatible" };
 };
 

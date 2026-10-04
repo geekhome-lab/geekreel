@@ -12,6 +12,8 @@ export type VideoGenNodeData = {
   status: "idle" | "running" | "done" | "failed";
   assetId?: string;
   error?: string;
+  /** 这场要说的台词，出片后交给时间线配音 */
+  line?: string;
 };
 
 export function VideoGenNode({ id, data, selected }: NodeProps<Node<VideoGenNodeData>>) {
@@ -56,9 +58,12 @@ export function VideoGenNode({ id, data, selected }: NodeProps<Node<VideoGenNode
             value={String(data.durationSec)}
             onChange={(e) => updateNodeData(id, { durationSec: Number(e.target.value) })}
           >
-            {[3, 5, 8, 10].map((s) => (
-              <option key={s} value={s}>{s} 秒</option>
-            ))}
+            {[...new Set([3, 4, 5, 6, 8, 10, 12, 15, 20, 30, data.durationSec])]
+              .filter((s) => s >= 1)
+              .sort((a, b) => a - b)
+              .map((s) => (
+                <option key={s} value={s}>{s} 秒</option>
+              ))}
           </select>
         </div>
         {data.error && <div className="rounded-lg bg-red-950/40 px-2 py-1.5 text-[10px] text-red-300">{data.error}</div>}

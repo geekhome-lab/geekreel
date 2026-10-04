@@ -2,7 +2,7 @@
   "id": "whiteboard",
   "name": "手绘白板",
   "version": "1.0.0",
-  "summary": "暖米黄纸底、深灰素描线。贴 SRT 或口播就能出片子，不用配模型；有图模型再换成线稿。",
+  "summary": "暖米黄纸底、深灰素描示意图。讲解/概念片用，不是上美影短剧，也不出写实定妆。",
   "cover": "samples/cover.svg",
   "previewColors": ["#F5EBD7", "#3A332C", "#C4542A", "#2F6F8F"],
   "requiredCapabilities": [],

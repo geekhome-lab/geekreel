@@ -6,8 +6,22 @@ import { err, ok } from "../lib/resp";
 export const jobsRoutes = new Hono();
 
 jobsRoutes.get("/", (c) => {
-  const status = c.req.query("status") as JobStatus | undefined;
-  return ok(c, jobQueue.list({ status }));
+  const raw = c.req.query("status");
+  const page = Math.max(Number(c.req.query("page") ?? 1) || 1, 1);
+  const pageSize = Math.min(Math.max(Number(c.req.query("pageSize") ?? 20) || 20, 1), 100);
+  const q = c.req.query("q")?.trim();
+  const type = c.req.query("type")?.trim();
+  let status: JobStatus | JobStatus[] | undefined;
+  if (raw === "active") status = ["queued", "running"];
+  else if (raw === "queued" || raw === "running" || raw === "done" || raw === "failed" || raw === "canceled") status = raw;
+  const { items, total } = jobQueue.queryJobs({
+    status,
+    q,
+    type,
+    limit: pageSize,
+    offset: (page - 1) * pageSize,
+  });
+  return ok(c, { items, total, page, pageSize });
 });
 
 jobsRoutes.get("/:id", (c) => {

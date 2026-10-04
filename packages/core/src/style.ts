@@ -48,6 +48,8 @@ export interface StylePackPublic {
   directory: string;
   source: "builtin" | "user";
   originUrl: string | null;
+  /** 出图/出片时整段注入，避免只写风格名 */
+  stylePrompt: string;
   editable: boolean;
 }
 
@@ -148,4 +150,73 @@ export interface FreePlan {
   title: string;
   summary: string;
   shots: FreeShot[];
+}
+
+/** 首页：先出剧本，再对台词批注 */
+export interface ScriptLine {
+  id: string;
+  speaker: string;
+  text: string;
+}
+
+export interface ScriptScene {
+  id: string;
+  heading: string;
+  action: string;
+  lines: ScriptLine[];
+  startSec: number;
+  endSec: number;
+}
+
+export interface ScriptNote {
+  id: string;
+  targetId: string;
+  text: string;
+}
+
+export interface ScriptDoc {
+  title: string;
+  logline: string;
+  durationSec: number;
+  scenes: ScriptScene[];
+}
+
+export interface KeyAssetNeed {
+  id: string;
+  kind: "character" | "scene";
+  name: string;
+  prompt: string;
+  assetId?: string | null;
+}
+
+/** 一场戏里要说出口的台词。讲解片没写对白时，用场次名当旁白。 */
+export function spokenLine(
+  scene: Pick<ScriptScene, "lines"> | { lines?: Array<{ text?: string }>; heading?: string },
+): string {
+  const fromLines = (scene.lines ?? [])
+    .map((l) => String(l.text ?? "").trim())
+    .filter(Boolean)
+    .join("\n");
+  if (fromLines) return fromLines;
+  const heading = "heading" in scene ? String(scene.heading ?? "").trim() : "";
+  return heading.replace(/^[^·]+·/, "").trim();
+}
+
+/** 从画布提示词里抽出「角色：台词」 */
+export function extractDialogue(text: string): string {
+  const spoken: string[] = [];
+  for (const raw of text.replace(/\r/g, "").split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const m = /^(.{1,16})[：:](.+)$/.exec(line);
+    if (!m) continue;
+    const speaker = m[1]!.trim();
+    const body = m[2]!.trim();
+    if (!body) continue;
+    if (/^【/.test(speaker)) continue;
+    if (/风格|锁定|必须|参考|画面|时长/.test(speaker)) continue;
+    if (/\d+:\d+/.test(speaker)) continue;
+    spoken.push(body);
+  }
+  return spoken.join("\n");
 }

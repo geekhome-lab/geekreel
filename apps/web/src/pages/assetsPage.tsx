@@ -1,19 +1,26 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   assetKindLabels,
   assetKinds,
   assetSourceLabels,
   assetTypeLabels,
+  assetWorkFolder,
+  assetWorkLabel,
+  buildAssetFolderTree,
   type Asset,
+  type AssetFolderNode,
   type AssetKind,
   type AssetSource,
   type AssetType,
-  type Project,
 } from "@vw/core";
 import { api, apiJson } from "../lib/api";
-import { formatBytes, formatDuration, formatTime, monthKey } from "../lib/format";
-import { iconAudio, iconImage, iconText, iconTrash, iconUpload, iconVideo } from "../lib/icons";
+import { formatBytes, formatDuration, formatTime } from "../lib/format";
+import { iconAudio, iconChevron, iconFolder, iconImage, iconText, iconTrash, iconUpload, iconVideo } from "../lib/icons";
+import { loadHomeDraft, saveHomeDraft } from "../lib/homeDraft";
+import { submitImageGen, waitForJob } from "../lib/runGen";
+import { confirmDanger, usePrefs } from "../lib/prefs";
 import { Modal } from "../components/modal";
 
 const typeIcons: Record<AssetType, (size?: number) => React.ReactNode> = {
@@ -33,39 +40,62 @@ const tabs: Array<{ key: string; label: string }> = [
 
 export function AssetsPage() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [type, setType] = useState("");
   const [kind, setKind] = useState("");
   const [source, setSource] = useState("");
-  const [projectId, setProjectId] = useState("");
+  const [folder, setFolder] = useState("");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [q, setQ] = useState("");
+  const [treeQ, setTreeQ] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [view, setView] = useState<"grid" | "list">("grid");
   const [picked, setPicked] = useState<string[]>([]);
+  const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({ works: true, 未归类: true });
   const fileInput = useRef<HTMLInputElement>(null);
+  const focusId = params.get("focus");
+  const returnTo = params.get("return");
+  const slotId = params.get("slot");
+
+  useEffect(() => {
+    if (!focusId) return;
+    setPreviewId(focusId);
+    void api<Asset>(`/api/assets/${focusId}`).then((a) => {
+      const next = assetWorkFolder(a.path);
+      setFolder(next);
+      setOpenFolders((m) => {
+        const extra: Record<string, boolean> = { ...m };
+        const parts = next.split("/");
+        let acc = "";
+        for (const p of parts) {
+          acc = acc ? `${acc}/${p}` : p;
+          extra[acc] = true;
+        }
+        return extra;
+      });
+    });
+  }, [focusId]);
 
   const queryString = useMemo(() => {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     if (kind) params.set("kind", kind);
     if (source) params.set("source", source);
-    if (projectId) params.set("projectId", projectId);
+    if (folder) params.set("folder", folder);
     if (favoriteOnly) params.set("favorite", "1");
     if (q.trim()) params.set("q", q.trim());
     const s = params.toString();
     return s ? `?${s}` : "";
-  }, [type, kind, source, projectId, favoriteOnly, q]);
+  }, [type, kind, source, folder, favoriteOnly, q]);
 
+  const canList = Boolean(folder || q.trim());
   const { data: assets } = useQuery({
-    queryKey: ["assets", type, kind, source, projectId, favoriteOnly, q],
+    queryKey: ["assets", type, kind, source, folder, favoriteOnly, q],
     queryFn: () => api<Asset[]>(`/api/assets${queryString}`),
-  });
-
-  const { data: projects } = useQuery({
-    queryKey: ["projects"],
-    queryFn: () => api<Project[]>("/api/projects"),
+    enabled: canList,
   });
 
   const { data: stats } = useQuery({
@@ -79,11 +109,17 @@ export function AssetsPage() {
       }>("/api/assets/stats"),
   });
 
+  const { data: folders } = useQuery({
+    queryKey: ["asset-folders"],
+    queryFn: () => api<Array<{ folder: string; label: string; count: number }>>("/api/assets/folders"),
+  });
+
   const deleteMutation = useMutation({
     mutationFn: (id: string) => apiJson(`/api/assets/${id}`, "delete"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["assets"] });
       queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["asset-folders"] });
       setPreviewId(null);
     },
     onError: (e) => {
@@ -101,27 +137,76 @@ export function AssetsPage() {
       await api<{ imported: Asset[]; skipped: string[] }>("/api/assets/import", { method: "POST", body: form });
       queryClient.invalidateQueries({ queryKey: ["assets"] });
       queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+      queryClient.invalidateQueries({ queryKey: ["asset-folders"] });
     } finally {
       setUploading(false);
     }
   };
 
-  // 按月份分组（与资产库目录结构一致）
   const groups = useMemo(() => {
     const map = new Map<string, Asset[]>();
     for (const a of assets ?? []) {
-      const key = monthKey(a.createdAt);
+      const key = assetWorkFolder(a.path);
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(a);
     }
-    return [...map.entries()].sort((a, b) => b[0].localeCompare(a[0]));
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0], "zh"));
   }, [assets]);
+
+  const tree = useMemo(() => {
+    const raw = buildAssetFolderTree(folders ?? []);
+    const needle = treeQ.trim();
+    if (!needle) return raw;
+    const walk = (n: AssetFolderNode): AssetFolderNode | null => {
+      if (n.label.includes(needle)) return n;
+      const children = n.children.map(walk).filter((x): x is AssetFolderNode => Boolean(x));
+      return children.length ? { ...n, children } : null;
+    };
+    return raw.map(walk).filter((x): x is AssetFolderNode => Boolean(x));
+  }, [folders, treeQ]);
 
   const totalBytes = stats?.byType.reduce((sum, t) => sum + t.bytes, 0) ?? 0;
 
+  const renderFiles = (items: Asset[]) =>
+    view === "grid" ? (
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
+        {items.map((a) => (
+          <div key={a.id} className="relative">
+            <label className="absolute top-2 left-2 z-10">
+              <input
+                type="checkbox"
+                className="accent-amber-400"
+                checked={picked.includes(a.id)}
+                onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
+              />
+            </label>
+            <AssetCard asset={a} onClick={() => setPreviewId(a.id)} />
+          </div>
+        ))}
+      </div>
+    ) : (
+      <div className="divide-y divide-line rounded-xl border border-line bg-panel">
+        {items.map((a) => (
+          <div key={a.id} className="flex items-center gap-3 px-3 py-2 text-xs">
+            <input
+              type="checkbox"
+              className="accent-amber-400"
+              checked={picked.includes(a.id)}
+              onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
+            />
+            <button className="min-w-0 flex-1 truncate text-left hover:text-accent" onClick={() => setPreviewId(a.id)}>
+              {a.title}
+            </button>
+            <span className="text-fg-faint">{assetTypeLabels[a.type]}</span>
+            <span className="text-fg-faint">{formatBytes(a.sizeBytes)}</span>
+          </div>
+        ))}
+      </div>
+    );
+
   return (
     <div
-      className="relative min-h-full p-6"
+      className="relative flex min-h-full"
       onDragOver={(e) => {
         e.preventDefault();
         setDragging(true);
@@ -133,12 +218,43 @@ export function AssetsPage() {
         upload(e.dataTransfer.files);
       }}
     >
-      {/* 头部 */}
+      <aside className="sticky top-0 flex h-screen w-64 shrink-0 flex-col border-r border-line bg-panel">
+        <div className="border-b border-line px-3 py-3">
+          <div className="text-xs font-medium">文件夹</div>
+          <input
+            className="mt-2 w-full rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-xs outline-none placeholder:text-fg-faint"
+            placeholder="找作品…"
+            value={treeQ}
+            onChange={(e) => setTreeQ(e.target.value)}
+          />
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-2">
+          {tree.length === 0 ? (
+            <p className="px-2 py-6 text-xs text-fg-faint">还没有文件夹</p>
+          ) : (
+            tree.map((node) => (
+              <FolderRow
+                key={node.id}
+                node={node}
+                depth={0}
+                selected={folder}
+                open={openFolders}
+                onToggle={(id) => setOpenFolders((m) => ({ ...m, [id]: !(m[id] ?? false) }))}
+                onSelect={setFolder}
+              />
+            ))
+          )}
+        </div>
+      </aside>
+
+      <div className="min-w-0 flex-1 p-6">
       <div className="mb-5 flex items-center justify-between">
         <div>
-          <h1 className="text-lg font-semibold">资产库</h1>
+          <h1 className="text-lg font-semibold">{folder ? assetWorkLabel(folder) : "资产库"}</h1>
           <p className="mt-0.5 text-xs text-fg-faint">
-            共 {stats?.total ?? 0} 个资产 · {formatBytes(totalBytes)} · 按 类型/年月/日期_标题 自动分类落盘
+            {folder
+              ? `${assets?.length ?? 0} 个文件 · 点开视频可「复刻爆款视频」`
+              : `共 ${stats?.total ?? 0} 个资产 · ${formatBytes(totalBytes)} · 抖音拉不下来时把成片导入，点开用「复刻爆款视频」`}
           </p>
         </div>
         <button
@@ -160,8 +276,7 @@ export function AssetsPage() {
         />
       </div>
 
-      {/* 类型 Tab + 搜索 */}
-      <div className="mb-5 flex items-center gap-3">
+      <div className="mb-5 flex flex-wrap items-center gap-3">
         <div className="flex rounded-lg border border-line bg-panel p-0.5">
           {tabs.map((t) => (
             <button
@@ -195,16 +310,6 @@ export function AssetsPage() {
             <option key={s} value={s}>{assetSourceLabels[s]}</option>
           ))}
         </select>
-        <select
-          className="rounded-lg border border-line bg-panel px-2 py-1.5 text-xs"
-          value={projectId}
-          onChange={(e) => setProjectId(e.target.value)}
-        >
-          <option value="">全部项目</option>
-          {(projects ?? []).map((p) => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
         <button
           className={`rounded-lg border px-3 py-1.5 text-xs ${favoriteOnly ? "border-accent bg-accent/15 text-accent" : "border-line text-fg-dim"}`}
           onClick={() => setFavoriteOnly((v) => !v)}
@@ -212,8 +317,8 @@ export function AssetsPage() {
           只看收藏
         </button>
         <input
-          className="w-64 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs outline-none placeholder:text-fg-faint focus:border-accent-dim"
-          placeholder="搜索标题或标签…"
+          className="w-56 rounded-lg border border-line bg-panel px-3 py-1.5 text-xs outline-none placeholder:text-fg-faint focus:border-accent-dim"
+          placeholder="在当前范围搜标题…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -230,15 +335,6 @@ export function AssetsPage() {
           >
             列表
           </button>
-          <button
-            className="rounded-lg border border-line px-2.5 py-1.5 text-xs text-fg-dim"
-            onClick={async () => {
-              await apiJson("/api/assets/cache/clear", "post");
-              queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
-            }}
-          >
-            清缓存
-          </button>
         </div>
       </div>
       {picked.length > 0 && (
@@ -247,11 +343,12 @@ export function AssetsPage() {
           <button
             className="rounded-lg border border-red-900/50 px-2 py-1 text-red-400"
             onClick={async () => {
-              if (!confirm(`删掉勾上的 ${picked.length} 条？画布还在用的会跳过。`)) return;
+              if (!confirmDanger(`删掉勾上的 ${picked.length} 条？画布还在用的会跳过。`)) return;
               await apiJson("/api/assets/batch", "post", { ids: picked, action: "delete" });
               setPicked([]);
               queryClient.invalidateQueries({ queryKey: ["assets"] });
               queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+              queryClient.invalidateQueries({ queryKey: ["asset-folders"] });
             }}
           >
             批量删除
@@ -259,76 +356,33 @@ export function AssetsPage() {
           <button className="text-fg-faint underline" onClick={() => setPicked([])}>取消勾选</button>
         </div>
       )}
-      {stats?.byMonth && stats.byMonth.length > 0 && (
-        <div className="mb-3 flex items-end gap-1.5">
-          {stats.byMonth.slice(0, 8).reverse().map((m) => {
-            const max = Math.max(...stats.byMonth!.map((x) => x.count), 1);
-            return (
-              <div key={m.month} className="flex w-10 flex-col items-center gap-1" title={`${m.month} ${m.count} 个 · ${formatBytes(m.bytes)}`}>
-                <div className="w-full rounded-sm bg-accent/70" style={{ height: `${Math.max(4, (m.count / max) * 36)}px` }} />
-                <span className="text-[9px] text-fg-faint">{m.month.slice(5)}</span>
-              </div>
-            );
-          })}
-          <span className="mb-3 ml-1 text-[10px] text-fg-faint">月度入库</span>
+
+      {!canList && (
+        <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-line text-fg-faint">
+          <div className="mb-2 opacity-40">{iconFolder({ width: 36, height: 36 })}</div>
+          <div className="text-sm">从左边打开一部作品，不要把一百部铺在一页上</div>
         </div>
       )}
-      {stats?.big && stats.big.length > 0 && (
-        <p className="mb-3 text-[10px] text-fg-faint">
-          大文件：{stats.big.slice(0, 3).map((b) => `${b.title} ${formatBytes(b.sizeBytes)}`).join(" · ")}
-        </p>
-      )}
 
-      {/* 分组网格 */}
-      {groups.length === 0 && (
+      {canList && groups.length === 0 && (
         <div className="flex h-64 flex-col items-center justify-center rounded-xl border border-dashed border-line text-fg-faint">
           <div className="mb-2 opacity-40">{iconBox36}</div>
-          <div className="text-sm">还没有资产，拖文件到这里或点「导入文件」</div>
+          <div className="text-sm">这个文件夹是空的，拖文件进来或点「导入文件」</div>
         </div>
       )}
 
-      {groups.map(([month, items]) => (
-        <section key={month} className="mb-7">
-          <h2 className="mb-3 text-xs font-medium text-fg-faint">
-            {month} <span className="ml-1 text-fg-faint/60">({items.length})</span>
-          </h2>
-          {view === "grid" ? (
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(180px,1fr))] gap-3">
-              {items.map((a) => (
-                <div key={a.id} className="relative">
-                  <label className="absolute top-2 left-2 z-10">
-                    <input
-                      type="checkbox"
-                      className="accent-amber-400"
-                      checked={picked.includes(a.id)}
-                      onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
-                    />
-                  </label>
-                  <AssetCard asset={a} onClick={() => setPreviewId(a.id)} />
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="divide-y divide-line rounded-xl border border-line bg-panel">
-              {items.map((a) => (
-                <div key={a.id} className="flex items-center gap-3 px-3 py-2 text-xs">
-                  <input
-                    type="checkbox"
-                    className="accent-amber-400"
-                    checked={picked.includes(a.id)}
-                    onChange={() => setPicked((xs) => (xs.includes(a.id) ? xs.filter((x) => x !== a.id) : [...xs, a.id]))}
-                  />
-                  <button className="min-w-0 flex-1 truncate text-left hover:text-accent" onClick={() => setPreviewId(a.id)}>
-                    {a.title}
-                  </button>
-                  <span className="text-fg-faint">{assetTypeLabels[a.type]}</span>
-                  <span className="text-fg-faint">{formatBytes(a.sizeBytes)}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-      ))}
+      {canList && q.trim()
+        ? groups.map(([work, items]) => (
+            <section key={work} className="mb-7">
+              <h2 className="mb-3 text-xs font-medium text-fg-faint">
+                {assetWorkLabel(work)} <span className="ml-1 text-fg-faint/60">({items.length})</span>
+              </h2>
+              {renderFiles(items)}
+            </section>
+          ))
+        : canList
+          ? renderFiles(assets ?? [])
+          : null}
 
       {/* 拖拽遮罩 */}
       {dragging && (
@@ -342,9 +396,74 @@ export function AssetsPage() {
       {previewId && (
         <AssetPreview
           id={previewId}
+          returnHome={returnTo === "home"}
+          slotId={slotId}
           onClose={() => setPreviewId(null)}
           onDelete={(id) => deleteMutation.mutate(id)}
+          onBackHome={() => navigate("/?return=home")}
         />
+      )}
+      </div>
+    </div>
+  );
+}
+
+function FolderRow(props: {
+  node: AssetFolderNode;
+  depth: number;
+  selected: string;
+  open: Record<string, boolean>;
+  onToggle: (id: string) => void;
+  onSelect: (folder: string) => void;
+}) {
+  const { node } = props;
+  const expanded = props.open[node.id] ?? props.depth < 1;
+  const active = props.selected === node.folder;
+  const hasKids = node.children.length > 0;
+  return (
+    <div>
+      <div className="flex items-center">
+        {hasKids ? (
+          <button
+            className="flex h-6 w-6 shrink-0 items-center justify-center text-fg-faint hover:text-fg"
+            onClick={() => props.onToggle(node.id)}
+          >
+            <span className={expanded ? "" : "-rotate-90"}>
+              {iconChevron({ width: 12, height: 12 })}
+            </span>
+          </button>
+        ) : (
+          <span className="w-6 shrink-0" />
+        )}
+        <button
+          className={`flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs ${
+            active ? "bg-accent/15 text-accent" : "text-fg-dim hover:bg-panel-2 hover:text-fg"
+          }`}
+          style={{ paddingLeft: 4 + props.depth * 2 }}
+          onClick={() => {
+            props.onSelect(node.folder);
+            if (hasKids && !expanded) props.onToggle(node.id);
+          }}
+        >
+          {iconFolder({ width: 13, height: 13 })}
+          <span className="min-w-0 flex-1 truncate">{node.label}</span>
+          <span className="shrink-0 text-[10px] text-fg-faint">{node.count}</span>
+        </button>
+      </div>
+      {hasKids && expanded && (
+        <div>
+          {node.children.map((child) => (
+            <FolderRow
+              key={child.id}
+              node={child}
+              depth={props.depth + 1}
+              selected={props.selected}
+              open={props.open}
+              onToggle={props.onToggle}
+              onSelect={props.onSelect}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -373,7 +492,7 @@ function AssetCard(props: { asset: Asset; onClick: () => void }) {
         {a.thumbPath ? (
           <img
             className="h-full w-full object-cover"
-            src={`/api/assets/${a.id}/file?variant=thumb`}
+            src={`/api/assets/${a.id}/file?variant=thumb&v=${a.sizeBytes}`}
             alt={a.title}
             loading="lazy"
           />
@@ -401,9 +520,20 @@ function AssetCard(props: { asset: Asset; onClick: () => void }) {
 // 预览弹窗
 // ---------------------------------------------------------------------------
 
-function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: string) => void }) {
+function AssetPreview(props: {
+  id: string;
+  onClose: () => void;
+  onDelete: (id: string) => void;
+  returnHome?: boolean;
+  slotId?: string | null;
+  onBackHome?: () => void;
+}) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [editingTitle, setEditingTitle] = useState<string | null>(null);
+  const [redoText, setRedoText] = useState("");
+  const [redoBusy, setRedoBusy] = useState(false);
+  const [redoError, setRedoError] = useState("");
 
   const { data: asset } = useQuery({
     queryKey: ["asset", props.id],
@@ -432,14 +562,12 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
         {/* 预览区 */}
         <div className="flex max-h-[46vh] items-center justify-center overflow-hidden rounded-lg bg-black/40">
           {asset.type === "video" && (
-            <video
-              className="max-h-[46vh] w-full"
-              controls
+            <AssetVideo
               src={asset.proxyPath ? fileUrl("proxy") : fileUrl("original")}
             />
           )}
           {asset.type === "image" && (
-            <img className="max-h-[46vh] object-contain" src={fileUrl("original")} alt={asset.title} />
+            <img className="max-h-[46vh] object-contain" src={`${fileUrl("original")}&v=${asset.sizeBytes}`} alt={asset.title} />
           )}
           {asset.type === "audio" && (
             <div className="w-full p-6">
@@ -500,9 +628,72 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
           </p>
         )}
 
+        {props.returnHome && asset.type === "image" && (
+          <div className="space-y-2 rounded-lg border border-line bg-panel-2 p-3">
+            <p className="text-xs text-fg-dim">从首页跳过来改这张。换完或改完标题，点下面回首页。</p>
+            <div className="flex gap-2">
+              <input
+                className="flex-1 rounded-lg border border-line bg-panel px-3 py-1.5 text-sm outline-none"
+                placeholder="例如：脸再凶一点，衣服改青布"
+                value={redoText}
+                onChange={(e) => setRedoText(e.target.value)}
+              />
+              <button
+                className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black disabled:opacity-40"
+                disabled={redoBusy}
+                onClick={async () => {
+                  setRedoBusy(true);
+                  setRedoError("");
+                  try {
+                    const job = await submitImageGen({
+                      prompt: redoText.trim() ? `${asset.title}。${redoText.trim()}` : asset.title,
+                      projectId: asset.projectId,
+                      replaceAssetId: asset.id,
+                    });
+                    const done = await waitForJob(job.id, 8 * 60_000);
+                    const result = JSON.parse(done.resultJson ?? "{}") as { assetId?: string };
+                    if (result.assetId && props.slotId) {
+                      const draft = loadHomeDraft();
+                      if (draft) {
+                        saveHomeDraft({
+                          ...draft,
+                          step: "keys",
+                          keys: draft.keys.map((k) => (k.id === props.slotId ? { ...k, assetId: result.assetId } : k)),
+                        });
+                      }
+                    }
+                    queryClient.invalidateQueries({ queryKey: ["assets"] });
+                    queryClient.invalidateQueries({ queryKey: ["asset", props.id] });
+                    queryClient.invalidateQueries({ queryKey: ["asset-folders"] });
+                    queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
+                  } catch (e) {
+                    setRedoError(e instanceof Error ? e.message : String(e));
+                  } finally {
+                    setRedoBusy(false);
+                  }
+                }}
+              >
+                {redoBusy ? "在换…" : "换一张"}
+              </button>
+            </div>
+            {redoError ? <p className="text-[11px] text-red-400">{redoError}</p> : null}
+            <button className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim" onClick={props.onBackHome}>
+              改完回首页
+            </button>
+          </div>
+        )}
+
         {/* 操作 */}
         <div className="flex justify-between">
           <div className="flex gap-2">
+            {asset.type === "video" && (
+              <button
+                className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black hover:brightness-110"
+                onClick={() => navigate(`/analyze?assetId=${asset.id}&remake=1`)}
+              >
+                复刻爆款视频
+              </button>
+            )}
             <a
               className="rounded-lg border border-line px-4 py-1.5 text-sm text-fg-dim hover:bg-panel-2 hover:text-fg"
               href={fileUrl("original")}
@@ -522,7 +713,7 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
             disabled={(refs?.length ?? 0) > 0}
             onClick={() => {
               if (refs && refs.length > 0) return;
-              if (confirm(`删除资产「${asset.title}」？文件将一并删除。`)) props.onDelete(asset.id);
+              if (confirmDanger(`删除资产「${asset.title}」？文件将一并删除。`)) props.onDelete(asset.id);
             }}
           >
             {iconTrash({})} 删除
@@ -595,6 +786,19 @@ function MetaItem(props: { label: string; value: string }) {
       <span className="text-fg-faint">{props.label}</span>
       <span className="truncate text-fg-dim">{props.value}</span>
     </div>
+  );
+}
+
+function AssetVideo(props: { src: string }) {
+  const autoplay = usePrefs((s) => s.autoplayPreview);
+  return (
+    <video
+      className="max-h-[46vh] w-full"
+      controls
+      muted={autoplay}
+      autoPlay={autoplay}
+      src={props.src}
+    />
   );
 }
 

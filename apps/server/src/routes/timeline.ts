@@ -2,9 +2,11 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { emptyTimelineDoc, type TimelineDoc } from "@vw/core";
+import { buildFinishTimeline } from "@vw/pipeline";
 import { db } from "../db";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
+import { collectFinishClips } from "../services/dub";
 import { listEndpoints } from "../services/models";
 
 /**
@@ -25,9 +27,9 @@ function timelineAbs(projectId: string): string | null {
 
 function isPortraitProject(projectId: string): boolean {
   const proj = db.query("SELECT seriesId FROM projects WHERE id = ?").get(projectId) as { seriesId: string | null } | null;
-  if (!proj?.seriesId) return false;
+  if (!proj?.seriesId) return true;
   const series = db.query("SELECT kind FROM series WHERE id = ?").get(proj.seriesId) as { kind: string } | null;
-  return series?.kind === "drama" || series?.kind === "free";
+  return series?.kind === "drama" || series?.kind === "free" || series?.kind === "whiteboard";
 }
 
 export const timelineRoutes = new Hono();
@@ -61,77 +63,70 @@ timelineRoutes.put("/project/:projectId", async (c) => {
 });
 
 /**
- * 从画布一键装配时间线（小白路径）：
- * 已完成的文生图节点按从左到右排成视频轨；对应文本节点写成字幕。
+ * 只装画面和台词，不配音。正式出片走 /finish。
  */
 timelineRoutes.post("/project/:projectId/from-canvas", async (c) => {
   const projectId = c.req.param("projectId");
-  const dir = projectDir(projectId);
-  if (!dir) return err(c, "项目不存在", 404);
-
-  const canvasRow = db
-    .query("SELECT path FROM canvas_docs WHERE projectId = ? ORDER BY updatedAt DESC LIMIT 1")
-    .get(projectId) as { path: string } | null;
-  if (!canvasRow) return err(c, "这个项目还没有画布，先去首页或画布页生成画面");
-
-  const canvasAbs = join(dir, canvasRow.path);
-  if (!existsSync(canvasAbs)) return err(c, "画布文件丢失", 404);
-  const canvas = JSON.parse(readFileSync(canvasAbs, "utf-8")) as {
-    nodes?: Array<{ id: string; type?: string; position?: { x: number }; data?: Record<string, unknown> }>;
-    edges?: Array<{ source: string; target: string; targetHandle?: string }>;
-  };
-
-  const genNodes = (canvas.nodes ?? [])
-    .filter((n) => (n.type === "imageGenNode" || n.type === "videoGenNode") && typeof n.data?.assetId === "string")
-    .sort((a, b) => (a.position?.x ?? 0) - (b.position?.x ?? 0));
-  if (genNodes.length === 0) return err(c, "画布上还没有生成好的画面。先在首页或画布点「运行」。", 422);
-
-  const edges = canvas.edges ?? [];
-  const nodesById = new Map((canvas.nodes ?? []).map((n) => [n.id, n]));
-  const shotMs = 3000;
-  const doc = emptyTimelineDoc({ portrait: isPortraitProject(projectId) });
-  const vTrack = doc.tracks.find((t) => t.type === "video")!;
-  const sTrack = doc.tracks.find((t) => t.type === "subtitle")!;
-
-  genNodes.forEach((n, i) => {
-    const startMs = i * shotMs;
-    vTrack.clips.push({
-      id: `c_v_${i}`,
-      assetId: n.data!.assetId as string,
-      startMs,
-      inMs: 0,
-      outMs: shotMs,
-      volume: 1,
+  if (!projectDir(projectId)) return err(c, "项目不存在", 404);
+  const body = (await c.req.json().catch(() => ({}))) as { withSubtitles?: boolean };
+  try {
+    const clips = collectFinishClips(projectId);
+    if (clips.length === 0) return err(c, "画布上还没有生成好的画面。先出片。", 422);
+    const doc = buildFinishTimeline(clips, {
+      portrait: isPortraitProject(projectId),
+      withSubtitles: body.withSubtitles !== false,
     });
-    const textEdge = edges.find((e) => e.target === n.id && e.targetHandle === "prompt");
-    const textNode = textEdge ? nodesById.get(textEdge.source) : undefined;
-    const text = typeof textNode?.data?.text === "string" ? textNode.data.text.trim() : "";
-    if (text) {
-      sTrack.clips.push({
-        id: `c_s_${i}`,
-        text: text.slice(0, 80),
-        startMs,
-        inMs: 0,
-        outMs: shotMs,
-        volume: 1,
-      });
-    }
-  });
+    const abs = timelineAbs(projectId)!;
+    mkdirSync(join(abs, ".."), { recursive: true });
+    const tmp = `${abs}.tmp-${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(doc), "utf-8");
+    renameSync(tmp, abs);
+    return ok(c, { doc, clipCount: clips.length });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
+});
 
-  const abs = timelineAbs(projectId)!;
-  mkdirSync(join(abs, ".."), { recursive: true });
-  const tmp = `${abs}.tmp-${process.pid}`;
-  writeFileSync(tmp, JSON.stringify(doc), "utf-8");
-  renameSync(tmp, abs);
-  return ok(c, { doc, clipCount: genNodes.length });
+/** 视频 + 剧本装上时间线，并自动配音 */
+timelineRoutes.post("/project/:projectId/finish", async (c) => {
+  const projectId = c.req.param("projectId");
+  if (!projectDir(projectId)) return err(c, "项目不存在", 404);
+  const busy = db
+    .query(
+      "SELECT * FROM jobs WHERE projectId = ? AND type = 'timeline.finish' AND status IN ('queued', 'running') LIMIT 1",
+    )
+    .get(projectId) as Record<string, unknown> | null;
+  if (busy) return ok(c, busy);
+  const body = (await c.req.json().catch(() => ({}))) as {
+    withSubtitles?: boolean;
+    dub?: boolean;
+    voice?: string;
+    ttsEndpointId?: string;
+  };
+  const job = jobQueue.submit(
+    "timeline.finish",
+    {
+      projectId,
+      withSubtitles: body.withSubtitles !== false,
+      dub: body.dub === true,
+      voice: body.voice,
+      ttsEndpointId: body.ttsEndpointId,
+    },
+    projectId,
+  );
+  return ok(c, job);
 });
 
 /** 提交导出任务 */
 timelineRoutes.post("/render", async (c) => {
-  const body = (await c.req.json().catch(() => ({}))) as { projectId?: string };
+  const body = (await c.req.json().catch(() => ({}))) as { projectId?: string; burnSubs?: boolean };
   if (!body.projectId) return err(c, "缺少 projectId");
   if (!projectDir(body.projectId)) return err(c, "项目不存在", 404);
-  const job = jobQueue.submit("timeline.render", { projectId: body.projectId }, body.projectId);
+  const job = jobQueue.submit(
+    "timeline.render",
+    { projectId: body.projectId, burnSubs: body.burnSubs !== false },
+    body.projectId,
+  );
   return ok(c, job);
 });
 

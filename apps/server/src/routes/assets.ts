@@ -11,6 +11,7 @@ import {
   deleteAsset,
   getAsset,
   hydrateAssets,
+  listAssetFolders,
   listAssetRefs,
   renameAsset,
   storeAsset,
@@ -23,6 +24,7 @@ export const assetsRoutes = new Hono();
 assetsRoutes.get("/", (c) => {
   const type = c.req.query("type");
   const month = c.req.query("month");
+  const folder = c.req.query("folder")?.trim();
   const q = c.req.query("q")?.trim();
   const projectId = c.req.query("projectId");
   const kind = c.req.query("kind");
@@ -34,6 +36,18 @@ assetsRoutes.get("/", (c) => {
   const params: SQLQueryBindings[] = [];
   if (type) { where.push("type = ?"); params.push(type); }
   if (month) { where.push("path LIKE ?"); params.push(`%/${month}/%`); }
+  if (folder) {
+    if (folder === "未归类") {
+      where.push("path NOT LIKE 'works/%'");
+    } else if (folder.startsWith("未归类/")) {
+      const t = folder.slice("未归类/".length);
+      where.push("path LIKE ? AND path NOT LIKE 'works/%'");
+      params.push(`${t}/%`);
+    } else {
+      where.push("path LIKE ?");
+      params.push(`${folder}/%`);
+    }
+  }
   if (q) { where.push("(title LIKE ? OR id IN (SELECT assetId FROM asset_tags WHERE tag LIKE ?))"); params.push(`%${q}%`, `%${q}%`); }
   if (projectId) { where.push("projectId = ?"); params.push(projectId); }
   if (kind) { where.push("kind = ?"); params.push(kind); }
@@ -47,6 +61,8 @@ assetsRoutes.get("/", (c) => {
 });
 
 assetsRoutes.get("/stats", (c) => ok(c, assetStats()));
+
+assetsRoutes.get("/folders", (c) => ok(c, listAssetFolders()));
 
 assetsRoutes.post("/batch", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { ids?: string[]; action?: string };
