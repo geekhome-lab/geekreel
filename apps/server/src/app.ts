@@ -12,6 +12,9 @@ import { assetsRoutes } from "./routes/assets";
 import { jobsRoutes } from "./routes/jobs";
 import { settingsRoutes } from "./routes/settings";
 import { fsRoutes } from "./routes/fs";
+import { modelsRoutes } from "./routes/models";
+import { genRoutes } from "./routes/gen";
+import { canvasRoutes } from "./routes/canvas";
 
 export const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -27,6 +30,9 @@ export function createApp() {
   app.route("/api/jobs", jobsRoutes);
   app.route("/api/settings", settingsRoutes);
   app.route("/api/fs", fsRoutes);
+  app.route("/api/models", modelsRoutes);
+  app.route("/api/gen", genRoutes);
+  app.route("/api/canvas", canvasRoutes);
 
   app.get(
     "/ws",

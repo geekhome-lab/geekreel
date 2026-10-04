@@ -63,6 +63,29 @@ CREATE TABLE IF NOT EXISTS settings (
   valueJson TEXT NOT NULL
 )`);
 
+db.run(`
+CREATE TABLE IF NOT EXISTS model_endpoints (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  adapterType TEXT NOT NULL,
+  capability TEXT NOT NULL,
+  configJson TEXT NOT NULL DEFAULT '{}',
+  webSearch INTEGER NOT NULL DEFAULT 0,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  isDefault INTEGER NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS canvas_docs (
+  id TEXT PRIMARY KEY,
+  projectId TEXT NOT NULL,
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  updatedAt INTEGER NOT NULL
+)`);
+db.run("CREATE INDEX IF NOT EXISTS idx_canvas_project ON canvas_docs(projectId)");
+
 // ---------------------------------------------------------------------------
 // 设置读写
 // ---------------------------------------------------------------------------

@@ -3,14 +3,17 @@
  * 检测顺序：环境变量 → PATH → 常见安装位置；缺失时返回 unavailable，调用方优雅降级。
  */
 
+/// <reference path="./types.d.ts" />
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import ffmpegStaticPath from "ffmpeg-static";
+import ffprobeStatic from "ffprobe-static";
 
 export interface MediaBins {
   ffmpeg: string | null;
   ffprobe: string | null;
-  /** "env" | "path" | "common" | "none" */
-  source: "env" | "path" | "common" | "none";
+  /** "env" | "path" | "common" | "bundled" | "none" */
+  source: "env" | "path" | "common" | "bundled" | "none";
   available: boolean;
 }
 
@@ -52,6 +55,14 @@ export async function detectBins(force = false): Promise<MediaBins> {
   const foundFfprobe = commonDirs.map((d) => join(d, "ffprobe")).find((p) => existsSync(p)) ?? null;
   if (foundFfmpeg) {
     cached = { ffmpeg: foundFfmpeg, ffprobe: foundFfprobe, source: "common", available: true };
+    return cached;
+  }
+
+  // 打包兜底：项目自带预编译二进制，开箱即用、无需用户配置
+  const bundledFfmpeg = ffmpegStaticPath && existsSync(ffmpegStaticPath) ? ffmpegStaticPath : null;
+  const bundledFfprobe = ffprobeStatic.path && existsSync(ffprobeStatic.path) ? ffprobeStatic.path : null;
+  if (bundledFfmpeg) {
+    cached = { ffmpeg: bundledFfmpeg, ffprobe: bundledFfprobe, source: "bundled", available: true };
     return cached;
   }
 

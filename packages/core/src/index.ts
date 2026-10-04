@@ -168,6 +168,9 @@ export const jobTypeLabels: Record<string, string> = {
   "asset.index": "资产索引",
   "asset.migrate": "资产迁移",
   "media.transcode": "转码",
+  "gen.image": "文生图",
+  "gen.video": "视频生成",
+  "gen.tts": "语音合成",
 };
 
 // ---------------------------------------------------------------------------

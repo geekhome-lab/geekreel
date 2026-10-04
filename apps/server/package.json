@@ -11,6 +11,7 @@
   "dependencies": {
     "@vw/core": "workspace:*",
     "@vw/media": "workspace:*",
+    "@vw/models": "workspace:*",
     "hono": "^4.8.0"
   },
   "devDependencies": {

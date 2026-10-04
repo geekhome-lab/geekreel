@@ -33,7 +33,7 @@ export function ProjectsPage() {
       setName("");
       setDirectory("");
       setCurrentProject(project.id);
-      navigate("/assets");
+      navigate("/canvas");
     },
     onError: (e) => setError(e instanceof Error ? e.message : String(e)),
   });
@@ -95,7 +95,7 @@ export function ProjectsPage() {
                 className="rounded-md border border-line px-3 py-1 text-xs text-fg-dim hover:border-accent-dim hover:text-accent"
                 onClick={() => {
                   setCurrentProject(p.id);
-                  navigate("/assets");
+                  navigate("/canvas");
                 }}
               >
                 打开

@@ -75,3 +75,11 @@ export const iconSettings = (p: SVGProps<SVGSVGElement>) => (
 export const iconHome = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="m3 9 9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /><path d="M9 22V12h6v10" /></svg>
 );
+
+export const iconCanvas = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><circle cx="6" cy="6" r="2.5" /><circle cx="18" cy="6" r="2.5" /><circle cx="12" cy="18" r="2.5" /><path d="M8.5 6h7M7.2 8.2l3.4 7.3M16.8 8.2l-3.4 7.3" /></svg>
+);
+
+export const iconCpu = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" /></svg>
+);

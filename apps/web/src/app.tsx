@@ -5,6 +5,8 @@ import { connectWs, onWsEvent } from "./lib/store";
 import { Layout } from "./components/layout";
 import { ProjectsPage } from "./pages/projectsPage";
 import { AssetsPage } from "./pages/assetsPage";
+import { CanvasPage } from "./pages/canvasPage";
+import { ModelsPage } from "./pages/modelsPage";
 import { JobsPage } from "./pages/jobsPage";
 import { SettingsPage } from "./pages/settingsPage";
 
@@ -46,7 +48,9 @@ export function App() {
           <Route element={<Layout />}>
             <Route index element={<Navigate to="/projects" replace />} />
             <Route path="/projects" element={<ProjectsPage />} />
+            <Route path="/canvas" element={<CanvasPage />} />
             <Route path="/assets" element={<AssetsPage />} />
+            <Route path="/models" element={<ModelsPage />} />
             <Route path="/jobs" element={<JobsPage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Route>
