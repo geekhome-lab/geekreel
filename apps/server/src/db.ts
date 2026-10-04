@@ -1,0 +1,85 @@
+import { Database } from "bun:sqlite";
+import { dbPath } from "./config";
+
+/**
+ * SQLite（bun:sqlite 直用，schema 稳定前不引入 ORM）。
+ * 原则：媒体与文档在文件系统，库只存索引与状态。
+ */
+export const db = new Database(dbPath, { create: true });
+db.run("PRAGMA journal_mode = WAL");
+db.run("PRAGMA foreign_keys = ON");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS projects (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  directory TEXT NOT NULL,
+  coverAssetId TEXT,
+  createdAt INTEGER NOT NULL,
+  updatedAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS assets (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  path TEXT NOT NULL,
+  name TEXT NOT NULL,
+  title TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'import',
+  projectId TEXT,
+  durationMs INTEGER,
+  width INTEGER,
+  height INTEGER,
+  sizeBytes INTEGER NOT NULL,
+  thumbPath TEXT,
+  proxyPath TEXT,
+  metaJson TEXT NOT NULL DEFAULT '{}',
+  createdAt INTEGER NOT NULL
+)`);
+db.run("CREATE INDEX IF NOT EXISTS idx_assets_type ON assets(type)");
+db.run("CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(createdAt DESC)");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  projectId TEXT,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  progress REAL NOT NULL DEFAULT 0,
+  message TEXT,
+  payloadJson TEXT NOT NULL DEFAULT '{}',
+  resultJson TEXT,
+  error TEXT,
+  createdAt INTEGER NOT NULL,
+  startedAt INTEGER,
+  finishedAt INTEGER
+)`);
+db.run("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, createdAt DESC)");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  valueJson TEXT NOT NULL
+)`);
+
+// ---------------------------------------------------------------------------
+// 设置读写
+// ---------------------------------------------------------------------------
+
+export function getSetting<T>(key: string, fallback: T): T {
+  const row = db.query("SELECT valueJson FROM settings WHERE key = ?").get(key) as { valueJson: string } | null;
+  if (!row) return fallback;
+  try {
+    return JSON.parse(row.valueJson) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function setSetting(key: string, value: unknown): void {
+  db.run(
+    "INSERT INTO settings (key, valueJson) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET valueJson = excluded.valueJson",
+    [key, JSON.stringify(value)],
+  );
+}

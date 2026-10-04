@@ -1,0 +1,22 @@
+{
+  "name": "video-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "bun run --filter '@vw/web' --filter '@vw/server' dev",
+    "dev:server": "bun run --filter '@vw/server' dev",
+    "dev:web": "bun run --filter '@vw/web' dev",
+    "build": "bun run --filter '@vw/web' build",
+    "start": "bun run --filter '@vw/server' start",
+    "typecheck": "bun run --filter '@vw/*' typecheck"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}
