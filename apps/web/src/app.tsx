@@ -33,6 +33,8 @@ function WsBridge() {
       }
       if (ev.type === "job.upsert") {
         qc.invalidateQueries({ queryKey: ["jobs"] });
+        if (ev.job.status === "done") qc.invalidateQueries({ queryKey: ["model-usage"] });
+        if (ev.job.type === "asset.migrate" && ev.job.status === "done") qc.invalidateQueries({ queryKey: ["settings"] });
         if (ev.job.type === "asset.index" && ev.job.status === "done") {
           qc.invalidateQueries({ queryKey: ["assets"] });
           qc.invalidateQueries({ queryKey: ["asset-stats"] });
