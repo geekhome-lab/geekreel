@@ -1,8 +1,9 @@
 import { useEffect } from "react";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
 import { connectWs, onWsEvent } from "./lib/store";
 import { Layout } from "./components/layout";
+import { HomePage } from "./pages/homePage";
 import { ProjectsPage } from "./pages/projectsPage";
 import { AssetsPage } from "./pages/assetsPage";
 import { CanvasPage } from "./pages/canvasPage";
@@ -46,7 +47,7 @@ export function App() {
         <WsBridge />
         <Routes>
           <Route element={<Layout />}>
-            <Route index element={<Navigate to="/projects" replace />} />
+            <Route index element={<HomePage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/canvas" element={<CanvasPage />} />
             <Route path="/assets" element={<AssetsPage />} />

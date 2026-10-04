@@ -83,3 +83,7 @@ export const iconCanvas = (p: SVGProps<SVGSVGElement>) => (
 export const iconCpu = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" /><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3" /></svg>
 );
+
+export const iconChat = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2Z" /></svg>
+);

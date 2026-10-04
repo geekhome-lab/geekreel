@@ -3,10 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 import type { PublicSettings } from "@vw/core";
 import { api } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { iconBox, iconCanvas, iconCpu, iconHome, iconSettings, iconTasks } from "../lib/icons";
+import { iconBox, iconCanvas, iconChat, iconCpu, iconFolder, iconSettings, iconTasks } from "../lib/icons";
 
 const navItems = [
-  { to: "/projects", label: "项目", icon: iconHome },
+  { to: "/", label: "首页", icon: iconChat },
+  { to: "/projects", label: "项目", icon: iconFolder },
   { to: "/canvas", label: "画布", icon: iconCanvas },
   { to: "/assets", label: "资产库", icon: iconBox },
   { to: "/models", label: "模型", icon: iconCpu },

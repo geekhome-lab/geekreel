@@ -250,6 +250,26 @@ function CanvasInner(props: { projectId: string }) {
     [runNode, pickAsset, runningIds],
   );
 
+  // 首页对话跳转后的自动运行：把所有文生图节点按顺序跑一遍
+  const autoRunFired = useRef(false);
+  useEffect(() => {
+    if (!loaded || autoRunFired.current) return;
+    if (!useAppStore.getState().pendingAutoRun) return;
+    autoRunFired.current = true;
+    useAppStore.getState().setPendingAutoRun(false);
+    const genIds = nodes.filter((n) => n.type === "imageGenNode").map((n) => n.id);
+    void (async () => {
+      for (const id of genIds) {
+        try {
+          await runNode(id);
+        } catch {
+          // 单节点失败不阻塞后续节点
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
+
   if (!loaded) {
     return <div className="flex h-full items-center justify-center text-sm text-fg-faint">画布加载中…</div>;
   }

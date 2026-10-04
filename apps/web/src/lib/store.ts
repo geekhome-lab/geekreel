@@ -6,18 +6,23 @@ interface AppState {
   /** WS 推送的实时任务状态（id → job） */
   liveJobs: Record<string, Job>;
   currentProjectId: string | null;
+  /** 首页对话跳转画布后的自动运行标记 */
+  pendingAutoRun: boolean;
   setCurrentProject(id: string | null): void;
+  setPendingAutoRun(v: boolean): void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
   wsConnected: false,
   liveJobs: {},
   currentProjectId: localStorage.getItem("vw.currentProjectId"),
+  pendingAutoRun: false,
   setCurrentProject: (id) => {
     if (id) localStorage.setItem("vw.currentProjectId", id);
     else localStorage.removeItem("vw.currentProjectId");
     set({ currentProjectId: id });
   },
+  setPendingAutoRun: (v) => set({ pendingAutoRun: v }),
 }));
 
 // ---------------------------------------------------------------------------
