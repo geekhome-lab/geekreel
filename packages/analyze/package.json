@@ -1,0 +1,23 @@
+{
+  "name": "@vw/analyze",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "install:bin": "bun scripts/install-ytdlp.ts",
+    "postinstall": "bun scripts/install-ytdlp.ts"
+  },
+  "dependencies": {
+    "@vw/core": "workspace:*",
+    "@vw/media": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -12,6 +12,7 @@ import { ModelsPage } from "./pages/modelsPage";
 import { JobsPage } from "./pages/jobsPage";
 import { SettingsPage } from "./pages/settingsPage";
 import { RadarPage } from "./pages/radarPage";
+import { AnalyzePage } from "./pages/analyzePage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,10 +37,11 @@ function WsBridge() {
           qc.invalidateQueries({ queryKey: ["asset-stats"] });
           qc.invalidateQueries({ queryKey: ["asset"] });
         }
-        if (ev.job.type.startsWith("radar.") && (ev.job.status === "done" || ev.job.status === "failed")) {
+        if ((ev.job.type.startsWith("radar.") || ev.job.type === "analyze.run" || ev.job.type === "remake.run") && (ev.job.status === "done" || ev.job.status === "failed")) {
           qc.invalidateQueries({ queryKey: ["radar-board"] });
           qc.invalidateQueries({ queryKey: ["radar-sources"] });
           qc.invalidateQueries({ queryKey: ["radar-status"] });
+          qc.invalidateQueries({ queryKey: ["analyze-reports"] });
         }
       }
       if (ev.type === "radar.upsert") qc.invalidateQueries({ queryKey: ["radar-board"] });
@@ -58,6 +60,7 @@ export function App() {
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
             <Route path="/radar" element={<RadarPage />} />
+            <Route path="/analyze" element={<AnalyzePage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/canvas" element={<CanvasPage />} />
             <Route path="/timeline" element={<TimelinePage />} />

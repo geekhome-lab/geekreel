@@ -19,7 +19,7 @@ const intents: Array<{ key: Intent; label: string; hint: string; ready: boolean 
   { key: "free", label: "自由创作", hint: "一句话出图", ready: true },
   { key: "drama", label: "小说转短剧", hint: "故事拆分镜出图", ready: true },
   { key: "whiteboard", label: "白板动画", hint: "M7 上线", ready: false },
-  { key: "remake", label: "复刻爆款", hint: "M5 上线", ready: false },
+  { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的", ready: true },
 ];
 
 const modelCaps: Capability[] = ["llm", "image", "video"];
@@ -79,6 +79,12 @@ export function HomePage() {
     }
     if (intent === "drama" && byCap.llm.length === 0) {
       setError("「小说转短剧」需要文本模型来拆分镜。到「模型」页添加一个文本模型，或先用「自由创作」。");
+      return;
+    }
+
+    if (intent === "remake") {
+      if (/^https?:\/\//i.test(input)) navigate(`/analyze?url=${encodeURIComponent(input)}`);
+      else navigate("/analyze");
       return;
     }
 

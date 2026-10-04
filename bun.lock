@@ -13,11 +13,13 @@
       "name": "@vw/server",
       "version": "0.1.0",
       "dependencies": {
+        "@vw/analyze": "workspace:*",
         "@vw/core": "workspace:*",
         "@vw/media": "workspace:*",
         "@vw/models": "workspace:*",
         "@vw/push": "workspace:*",
         "@vw/radar": "workspace:*",
+        "@vw/remake": "workspace:*",
         "hono": "^4.8.0",
       },
       "devDependencies": {
@@ -46,6 +48,18 @@
         "tailwindcss": "^4.1.7",
         "typescript": "^5.8.0",
         "vite": "^6.3.5",
+      },
+    },
+    "packages/analyze": {
+      "name": "@vw/analyze",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+        "@vw/media": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
       },
     },
     "packages/core": {
@@ -89,6 +103,17 @@
     },
     "packages/radar": {
       "name": "@vw/radar",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
+      },
+    },
+    "packages/remake": {
+      "name": "@vw/remake",
       "version": "0.1.0",
       "dependencies": {
         "@vw/core": "workspace:*",
@@ -322,6 +347,8 @@
 
     "@vitejs/plugin-react": ["@vitejs/plugin-react@4.7.0", "", { "dependencies": { "@babel/core": "^7.28.0", "@babel/plugin-transform-react-jsx-self": "^7.27.1", "@babel/plugin-transform-react-jsx-source": "^7.27.1", "@rolldown/pluginutils": "1.0.0-beta.27", "@types/babel__core": "^7.20.5", "react-refresh": "^0.17.0" }, "peerDependencies": { "vite": "^4.2.0 || ^5.0.0 || ^6.0.0 || ^7.0.0" } }, "sha512-gUu9hwfWvvEDBBmgtAowQCojwZmJ5mcLn3aufeCsitijs3+f2NsrPtlAWIR6OPiqljl96GVCUbLe0HyqIpVaoA=="],
 
+    "@vw/analyze": ["@vw/analyze@workspace:packages/analyze"],
+
     "@vw/core": ["@vw/core@workspace:packages/core"],
 
     "@vw/media": ["@vw/media@workspace:packages/media"],
@@ -331,6 +358,8 @@
     "@vw/push": ["@vw/push@workspace:packages/push"],
 
     "@vw/radar": ["@vw/radar@workspace:packages/radar"],
+
+    "@vw/remake": ["@vw/remake@workspace:packages/remake"],
 
     "@vw/server": ["@vw/server@workspace:apps/server"],
 

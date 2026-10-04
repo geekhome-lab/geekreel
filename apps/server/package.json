@@ -9,11 +9,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@vw/analyze": "workspace:*",
     "@vw/core": "workspace:*",
     "@vw/media": "workspace:*",
     "@vw/models": "workspace:*",
     "@vw/push": "workspace:*",
     "@vw/radar": "workspace:*",
+    "@vw/remake": "workspace:*",
     "hono": "^4.8.0"
   },
   "devDependencies": {

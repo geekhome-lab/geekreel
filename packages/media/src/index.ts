@@ -1,6 +1,7 @@
 /**
  * @vw/media —— ffmpeg/ffprobe 封装。
- * 检测顺序：环境变量 → PATH → 常见安装位置；缺失时返回 unavailable，调用方优雅降级。
+ * 检测顺序：环境变量 → 项目自带(ffmpeg-static) → PATH → 常见安装位置。
+ * 自带优先，换机器不用装 ffmpeg。
  */
 
 /// <reference path="./types.d.ts" />
@@ -46,6 +47,14 @@ export async function detectBins(force = false): Promise<MediaBins> {
     return cached;
   }
 
+  // 项目自带优先：换机器不用装 ffmpeg
+  const bundledFfmpeg = ffmpegStaticPath && existsSync(ffmpegStaticPath) ? ffmpegStaticPath : null;
+  const bundledFfprobe = ffprobeStatic.path && existsSync(ffprobeStatic.path) ? ffprobeStatic.path : null;
+  if (bundledFfmpeg) {
+    cached = { ffmpeg: bundledFfmpeg, ffprobe: bundledFfprobe, source: "bundled", available: true };
+    return cached;
+  }
+
   const [pathFfmpeg, pathFfprobe] = await Promise.all([whichOk("ffmpeg"), whichOk("ffprobe")]);
   if (pathFfmpeg) {
     cached = { ffmpeg: pathFfmpeg, ffprobe: pathFfprobe, source: "path", available: true };
@@ -57,14 +66,6 @@ export async function detectBins(force = false): Promise<MediaBins> {
   const foundFfprobe = commonDirs.map((d) => join(d, "ffprobe")).find((p) => existsSync(p)) ?? null;
   if (foundFfmpeg) {
     cached = { ffmpeg: foundFfmpeg, ffprobe: foundFfprobe, source: "common", available: true };
-    return cached;
-  }
-
-  // 打包兜底：项目自带预编译二进制，开箱即用、无需用户配置
-  const bundledFfmpeg = ffmpegStaticPath && existsSync(ffmpegStaticPath) ? ffmpegStaticPath : null;
-  const bundledFfprobe = ffprobeStatic.path && existsSync(ffprobeStatic.path) ? ffprobeStatic.path : null;
-  if (bundledFfmpeg) {
-    cached = { ffmpeg: bundledFfmpeg, ffprobe: bundledFfprobe, source: "bundled", available: true };
     return cached;
   }
 

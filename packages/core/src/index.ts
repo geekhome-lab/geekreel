@@ -6,6 +6,7 @@
 import type { PushLog, RadarItem } from "./radar";
 export * from "./timeline";
 export * from "./radar";
+export * from "./analyze";
 
 // ---------------------------------------------------------------------------
 // 资产
@@ -178,6 +179,8 @@ export const jobTypeLabels: Record<string, string> = {
   "timeline.render": "时间线导出",
   "radar.fetch": "雷达取热点",
   "radar.digest": "雷达早报",
+  "analyze.run": "竞品分析",
+  "remake.run": "爆款复刻",
 };
 
 // ---------------------------------------------------------------------------

@@ -95,3 +95,7 @@ export const iconScissors = (p: SVGProps<SVGSVGElement>) => (
 export const iconRadar = (p: SVGProps<SVGSVGElement>) => (
   <svg {...base(p)}><path d="M12 12h.01" /><path d="M2 12a10 10 0 0 1 20 0" /><path d="M5 12a7 7 0 0 1 14 0" /><path d="M8.5 12a3.5 3.5 0 0 1 7 0" /></svg>
 );
+
+export const iconAnalyze = (p: SVGProps<SVGSVGElement>) => (
+  <svg {...base(p)}><path d="M3 3h7v7H3Z" /><path d="M14 3h7v7h-7Z" /><path d="M14 14h7v7h-7Z" /><path d="M3 14h7v7H3Z" /></svg>
+);

@@ -18,6 +18,8 @@ import { canvasRoutes } from "./routes/canvas";
 import { timelineRoutes } from "./routes/timeline";
 import { radarRoutes } from "./routes/radar";
 import { pushRoutes } from "./routes/push";
+import { analyzeRoutes } from "./routes/analyze";
+import { remakeRoutes } from "./routes/remake";
 
 export const { upgradeWebSocket, websocket } = createBunWebSocket();
 
@@ -39,6 +41,8 @@ export function createApp() {
   app.route("/api/timeline", timelineRoutes);
   app.route("/api/radar", radarRoutes);
   app.route("/api/push", pushRoutes);
+  app.route("/api/analyze", analyzeRoutes);
+  app.route("/api/remake", remakeRoutes);
 
   app.get(
     "/ws",

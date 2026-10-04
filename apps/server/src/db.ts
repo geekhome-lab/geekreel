@@ -151,6 +151,37 @@ CREATE TABLE IF NOT EXISTS push_logs (
   createdAt INTEGER NOT NULL
 )`);
 
+db.run(`
+CREATE TABLE IF NOT EXISTS analysis_reports (
+  id TEXT PRIMARY KEY,
+  sourceUrl TEXT,
+  videoAssetId TEXT,
+  title TEXT NOT NULL,
+  reportJson TEXT NOT NULL,
+  framesJson TEXT NOT NULL DEFAULT '[]',
+  transcript TEXT,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS remake_templates (
+  id TEXT PRIMARY KEY,
+  analysisId TEXT,
+  name TEXT NOT NULL,
+  slotsJson TEXT NOT NULL,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS remake_runs (
+  id TEXT PRIMARY KEY,
+  templateId TEXT NOT NULL,
+  projectId TEXT,
+  variablesJson TEXT NOT NULL,
+  status TEXT NOT NULL,
+  createdAt INTEGER NOT NULL
+)`);
+
 // ---------------------------------------------------------------------------
 // 设置读写
 // ---------------------------------------------------------------------------
