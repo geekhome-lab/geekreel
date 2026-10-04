@@ -11,6 +11,7 @@ import {
   deleteAsset,
   getAsset,
   hydrateAssets,
+  listAssetRefs,
   renameAsset,
   storeAsset,
   updateAssetMeta,
@@ -25,6 +26,7 @@ assetsRoutes.get("/", (c) => {
   const q = c.req.query("q")?.trim();
   const projectId = c.req.query("projectId");
   const kind = c.req.query("kind");
+  const source = c.req.query("source");
   const favorite = c.req.query("favorite");
   const tag = c.req.query("tag")?.trim();
 
@@ -35,6 +37,7 @@ assetsRoutes.get("/", (c) => {
   if (q) { where.push("(title LIKE ? OR id IN (SELECT assetId FROM asset_tags WHERE tag LIKE ?))"); params.push(`%${q}%`, `%${q}%`); }
   if (projectId) { where.push("projectId = ?"); params.push(projectId); }
   if (kind) { where.push("kind = ?"); params.push(kind); }
+  if (source) { where.push("source = ?"); params.push(source); }
   if (favorite === "1") { where.push("favorite = 1"); }
   if (tag) { where.push("id IN (SELECT assetId FROM asset_tags WHERE tag = ?)"); params.push(tag); }
 
@@ -129,6 +132,8 @@ assetsRoutes.post("/import-path", async (c) => {
   }
   return ok(c, { imported, skipped });
 });
+
+assetsRoutes.get("/:id/refs", (c) => ok(c, listAssetRefs(c.req.param("id"))));
 
 assetsRoutes.get("/:id", (c) => {
   const asset = getAsset(c.req.param("id"));

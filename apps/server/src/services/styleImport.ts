@@ -5,6 +5,7 @@ import {
   extractTextFromZip,
   fetchSkillText,
   heuristicDraft,
+  importPackFromZip,
   parseSkillMarkdown,
   parseStyleDraft,
   removeUserPackDir,
@@ -79,8 +80,13 @@ export const styleImportHandler: JobHandler = async (job, ctx) => {
     if (filename.toLowerCase().endsWith(".zip")) {
       ctx.progress(0.2, "解开压缩包");
       const bin = Uint8Array.from(Buffer.from(text, "base64"));
+      const packed = importPackFromZip(bin, extraPackDirs());
+      if (packed) {
+        ctx.progress(1, "已导入风格包");
+        return { packId: packed.id, name: packed.name, directory: packed.directory };
+      }
       const extracted = extractTextFromZip(bin);
-      if (!extracted) throw new Error("压缩包里没找到 SKILL.md 或说明文件");
+      if (!extracted) throw new Error("压缩包里没找到风格包或 SKILL.md");
       text = extracted;
     }
     ctx.progress(0.4, "读技能");

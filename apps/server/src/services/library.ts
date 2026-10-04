@@ -202,24 +202,40 @@ export function renameAsset(id: string, newTitle: string): Asset {
 
 // ---------------------------------------------------------------------------
 // 删除（含缓存文件）
-// TODO(M2+)：画布/时间线上线后，删除前做引用检查
 // ---------------------------------------------------------------------------
 
+export interface AssetRef {
+  projectId: string;
+  projectName: string;
+  kind: "canvas" | "timeline";
+}
+
 /** 画布/时间线还引用着就不能删 */
-export function countAssetRefs(id: string): number {
-  let n = 0;
-  const projects = db.query("SELECT id, directory FROM projects").all() as Array<{ id: string; directory: string }>;
+export function listAssetRefs(id: string): AssetRef[] {
+  const refs: AssetRef[] = [];
+  const projects = db.query("SELECT id, name, directory FROM projects").all() as Array<{
+    id: string;
+    name: string;
+    directory: string;
+  }>;
   for (const p of projects) {
     const timeline = join(p.directory, "timeline", "main.json");
-    if (fileMentions(timeline, id)) n++;
+    if (fileMentions(timeline, id)) refs.push({ projectId: p.id, projectName: p.name, kind: "timeline" });
     const canvasDir = join(p.directory, "canvas");
     if (existsSync(canvasDir) && statSync(canvasDir).isDirectory()) {
       for (const name of readdirSync(canvasDir)) {
-        if (name.endsWith(".json") && fileMentions(join(canvasDir, name), id)) n++;
+        if (name.endsWith(".json") && fileMentions(join(canvasDir, name), id)) {
+          refs.push({ projectId: p.id, projectName: p.name, kind: "canvas" });
+          break;
+        }
       }
     }
   }
-  return n;
+  return refs;
+}
+
+export function countAssetRefs(id: string): number {
+  return listAssetRefs(id).length;
 }
 
 function fileMentions(abs: string, id: string): boolean {

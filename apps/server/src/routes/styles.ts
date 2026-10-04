@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Hono } from "hono";
+import { zipDirectory } from "@vw/style";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
 import { deleteUserStyle, type StyleImportPayload } from "../services/styleImport";
@@ -27,6 +28,22 @@ stylesRoutes.post("/import", async (c) => {
     endpointId: body.endpointId,
   });
   return ok(c, job);
+});
+
+stylesRoutes.get("/:id/export", (c) => {
+  const pack = loadPack(c.req.param("id"));
+  if (!pack) return err(c, "风格包不存在", 404);
+  try {
+    const bytes = zipDirectory(pack.directory, pack.public.id);
+    return new Response(Buffer.from(bytes), {
+      headers: {
+        "Content-Type": "application/zip",
+        "Content-Disposition": `attachment; filename="${pack.public.id}.zip"`,
+      },
+    });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e));
+  }
 });
 
 stylesRoutes.delete("/:id", (c) => {

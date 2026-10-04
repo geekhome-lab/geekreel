@@ -9,6 +9,7 @@ import type { PaletteDoc, StylePackManifest, StylePackPublic } from "@vw/core";
 
 export * from "./fromSkill";
 export * from "./writePack";
+export * from "./zip";
 
 export interface LoadedPack {
   public: StylePackPublic;

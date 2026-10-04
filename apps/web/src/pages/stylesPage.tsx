@@ -96,7 +96,7 @@ export function StylesPage() {
       <div className="w-[300px] shrink-0">
         <h1 className="text-lg font-semibold">风格中心</h1>
         <p className="mt-0.5 mb-3 text-xs text-fg-faint">
-          内置两套。第三套自己加：贴 GitHub 技能链接、自定义风格，或上传 SKILL.md。
+          内置两套。第三套自己加：贴 GitHub 技能链接、自定义风格，或上传 SKILL.md / zip。做好的包可以带走。
         </p>
         <div className="mb-3 flex gap-2">
           <button
@@ -152,11 +152,19 @@ export function StylesPage() {
                   {pack.originUrl ? " · 来自链接" : ""}
                 </p>
               </div>
-              {pack.editable && (
-                <button className="rounded-lg border border-line p-2 text-fg-faint hover:text-red-300" onClick={remove} title="删除这套自建风格">
-                  {iconTrash({})}
+              <div className="flex gap-2">
+                <button
+                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim hover:text-fg"
+                  onClick={() => void downloadPack(pack.id)}
+                >
+                  带走 zip
                 </button>
-              )}
+                {pack.editable && (
+                  <button className="rounded-lg border border-line p-2 text-fg-faint hover:text-red-300" onClick={remove} title="删除这套自建风格">
+                    {iconTrash({})}
+                  </button>
+                )}
+              </div>
             </div>
 
             {!pack.ready && (
@@ -241,6 +249,21 @@ export function StylesPage() {
       )}
     </div>
   );
+}
+
+async function downloadPack(id: string) {
+  const res = await fetch(`/api/styles/${id}/export`);
+  if (!res.ok) {
+    const json = (await res.json().catch(() => null)) as { error?: string } | null;
+    alert(json?.error || "导出失败");
+    return;
+  }
+  const blob = await res.blob();
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${id}.zip`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function PackCover(props: { pack: StylePackPublic }) {

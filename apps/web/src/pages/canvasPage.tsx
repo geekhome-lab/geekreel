@@ -30,7 +30,10 @@ import { VideoGenNode, type VideoGenNodeData } from "../components/canvas/videoG
 import { TtsNode, type TtsNodeData } from "../components/canvas/ttsNode";
 import { FfmpegNode, type FfmpegNodeData } from "../components/canvas/ffmpegNode";
 import { ShotNode, shotPrompt, type ShotNodeData } from "../components/canvas/shotNode";
+import { SceneNode, scenePrompt, type SceneNodeData } from "../components/canvas/sceneNode";
+import { EpisodeNode, episodePrompt, type EpisodeNodeData } from "../components/canvas/episodeNode";
 import { NoteNode, type NoteNodeData } from "../components/canvas/noteNode";
+import { GroupNode, type GroupNodeData } from "../components/canvas/groupNode";
 import { AssetPickerModal } from "../components/canvas/assetPickerModal";
 
 const GEN_TYPES = new Set(["imageGenNode", "videoGenNode", "ttsNode", "ffmpegNode"]);
@@ -43,7 +46,10 @@ const nodeTypes = {
   ttsNode: TtsNode,
   ffmpegNode: FfmpegNode,
   shotNode: ShotNode,
+  sceneNode: SceneNode,
+  episodeNode: EpisodeNode,
   noteNode: NoteNode,
+  groupNode: GroupNode,
 };
 
 interface CanvasMeta {
@@ -159,7 +165,20 @@ function CanvasInner(props: { projectId: string }) {
   // ---------------------------------------------------------------------------
 
   const addNode = useCallback(
-    (type: "textNode" | "assetNode" | "imageGenNode" | "videoGenNode" | "ttsNode" | "ffmpegNode" | "shotNode" | "noteNode") => {
+    (
+      type:
+        | "textNode"
+        | "assetNode"
+        | "imageGenNode"
+        | "videoGenNode"
+        | "ttsNode"
+        | "ffmpegNode"
+        | "shotNode"
+        | "sceneNode"
+        | "episodeNode"
+        | "noteNode"
+        | "groupNode",
+    ) => {
       const position = screenToFlowPosition({ x: window.innerWidth / 2, y: window.innerHeight / 2 - 100 });
       const id = newNodeId();
       const dataByType = {
@@ -175,10 +194,22 @@ function CanvasInner(props: { projectId: string }) {
         ttsNode: { text: "", endpointId: null, status: "idle" } satisfies TtsNodeData,
         ffmpegNode: { op: "extract", atMs: 1000, text: "", status: "idle" } satisfies FfmpegNodeData,
         shotNode: { visual: "", line: "" } satisfies ShotNodeData,
+        sceneNode: { place: "", time: "", mood: "" } satisfies SceneNodeData,
+        episodeNode: { title: "", synopsis: "" } satisfies EpisodeNodeData,
         noteNode: { text: "" } satisfies NoteNodeData,
+        groupNode: { label: "分组" } satisfies GroupNodeData,
       };
       setNodes((ns) => {
-        const next = [...ns, { id, type, position, data: dataByType[type] }];
+        const next = [
+          ...ns,
+          {
+            id,
+            type,
+            position,
+            data: dataByType[type],
+            ...(type === "groupNode" ? { style: { width: 360, height: 220 }, zIndex: -1 } : {}),
+          },
+        ];
         scheduleSave(next, getEdges());
         return next;
       });
@@ -228,6 +259,8 @@ function CanvasInner(props: { projectId: string }) {
             .map((n) => {
               if (n?.type === "textNode") return (n.data as TextNodeData).text.trim();
               if (n?.type === "shotNode") return shotPrompt(n.data as ShotNodeData);
+              if (n?.type === "sceneNode") return scenePrompt(n.data as SceneNodeData);
+              if (n?.type === "episodeNode") return episodePrompt(n.data as EpisodeNodeData);
               return "";
             })
             .filter(Boolean);
@@ -414,7 +447,10 @@ function CanvasInner(props: { projectId: string }) {
         {/* 工具栏 */}
         <div className="absolute top-3 left-3 z-10 flex items-center gap-1.5 rounded-xl border border-line bg-panel/90 p-1.5 backdrop-blur">
           <ToolbarButton label="文本" onClick={() => addNode("textNode")} />
+          <ToolbarButton label="分集" onClick={() => addNode("episodeNode")} />
+          <ToolbarButton label="场景卡" onClick={() => addNode("sceneNode")} />
           <ToolbarButton label="分镜卡" onClick={() => addNode("shotNode")} />
+          <ToolbarButton label="分组" onClick={() => addNode("groupNode")} />
           <ToolbarButton label="注释" onClick={() => addNode("noteNode")} />
           <ToolbarButton label="资产" onClick={() => addNode("assetNode")} />
           <ToolbarButton label="文生图" onClick={() => addNode("imageGenNode")} />

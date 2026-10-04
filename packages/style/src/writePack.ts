@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join, resolve } from "node:path";
 import { sanitizeTitle, type StylePackManifest } from "@vw/core";
 import type { StyleDraft } from "./fromSkill";
+import { flattenPackEntries, readZip, writeZipEntries } from "./zip";
 
 export function userStylePacksRoot(): string {
   return resolve(join(import.meta.dir, "../../../stylePacks"));
@@ -95,4 +96,31 @@ export function writeStylePack(opts: {
 
 export function removeUserPackDir(directory: string): void {
   rmSync(directory, { recursive: true, force: true });
+}
+
+/** 把别人带走的风格包 zip 原样落盘。没有 pack.json 就返回 null，走技能转换。 */
+export function importPackFromZip(
+  buf: Uint8Array,
+  extraDirs: string[] = [],
+  destRoot?: string,
+): { id: string; directory: string; name: string } | null {
+  const flat = flattenPackEntries(readZip(buf));
+  if (!flat) return null;
+  const packEntry = flat.find((e) => e.name === "pack.json");
+  if (!packEntry) return null;
+  let manifest: { id?: string; name?: string };
+  try {
+    manifest = JSON.parse(new TextDecoder().decode(packEntry.data)) as { id?: string; name?: string };
+  } catch {
+    return null;
+  }
+  const name = manifest.name?.trim() || "未命名风格";
+  const id = uniqueStyleId(manifest.id?.trim() || name, extraDirs);
+  const root = destRoot ?? userStylePacksRoot();
+  const directory = join(root, id);
+  mkdirSync(directory, { recursive: true });
+  writeZipEntries(flat, directory);
+  const next = { ...(manifest as Record<string, unknown>), id, name, source: "user" };
+  writeFileSync(join(directory, "pack.json"), JSON.stringify(next, null, 2));
+  return { id, directory, name };
 }

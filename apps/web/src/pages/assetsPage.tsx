@@ -7,7 +7,9 @@ import {
   assetTypeLabels,
   type Asset,
   type AssetKind,
+  type AssetSource,
   type AssetType,
+  type Project,
 } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { formatBytes, formatDuration, formatTime, monthKey } from "../lib/format";
@@ -33,6 +35,8 @@ export function AssetsPage() {
   const queryClient = useQueryClient();
   const [type, setType] = useState("");
   const [kind, setKind] = useState("");
+  const [source, setSource] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [q, setQ] = useState("");
   const [previewId, setPreviewId] = useState<string | null>(null);
@@ -46,15 +50,22 @@ export function AssetsPage() {
     const params = new URLSearchParams();
     if (type) params.set("type", type);
     if (kind) params.set("kind", kind);
+    if (source) params.set("source", source);
+    if (projectId) params.set("projectId", projectId);
     if (favoriteOnly) params.set("favorite", "1");
     if (q.trim()) params.set("q", q.trim());
     const s = params.toString();
     return s ? `?${s}` : "";
-  }, [type, kind, favoriteOnly, q]);
+  }, [type, kind, source, projectId, favoriteOnly, q]);
 
   const { data: assets } = useQuery({
-    queryKey: ["assets", type, kind, favoriteOnly, q],
+    queryKey: ["assets", type, kind, source, projectId, favoriteOnly, q],
     queryFn: () => api<Asset[]>(`/api/assets${queryString}`),
+  });
+
+  const { data: projects } = useQuery({
+    queryKey: ["projects"],
+    queryFn: () => api<Project[]>("/api/projects"),
   });
 
   const { data: stats } = useQuery({
@@ -62,6 +73,7 @@ export function AssetsPage() {
     queryFn: () =>
       api<{
         byType: Array<{ type: AssetType; count: number; bytes: number }>;
+        byMonth?: Array<{ month: string; count: number; bytes: number }>;
         total: number;
         big?: Array<{ id: string; title: string; type: AssetType; sizeBytes: number }>;
       }>("/api/assets/stats"),
@@ -73,6 +85,9 @@ export function AssetsPage() {
       queryClient.invalidateQueries({ queryKey: ["assets"] });
       queryClient.invalidateQueries({ queryKey: ["asset-stats"] });
       setPreviewId(null);
+    },
+    onError: (e) => {
+      alert(e instanceof Error ? e.message : String(e));
     },
   });
 
@@ -170,6 +185,26 @@ export function AssetsPage() {
             <option key={k} value={k}>{assetKindLabels[k]}</option>
           ))}
         </select>
+        <select
+          className="rounded-lg border border-line bg-panel px-2 py-1.5 text-xs"
+          value={source}
+          onChange={(e) => setSource(e.target.value)}
+        >
+          <option value="">全部来源</option>
+          {(Object.keys(assetSourceLabels) as AssetSource[]).map((s) => (
+            <option key={s} value={s}>{assetSourceLabels[s]}</option>
+          ))}
+        </select>
+        <select
+          className="rounded-lg border border-line bg-panel px-2 py-1.5 text-xs"
+          value={projectId}
+          onChange={(e) => setProjectId(e.target.value)}
+        >
+          <option value="">全部项目</option>
+          {(projects ?? []).map((p) => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         <button
           className={`rounded-lg border px-3 py-1.5 text-xs ${favoriteOnly ? "border-accent bg-accent/15 text-accent" : "border-line text-fg-dim"}`}
           onClick={() => setFavoriteOnly((v) => !v)}
@@ -222,6 +257,20 @@ export function AssetsPage() {
             批量删除
           </button>
           <button className="text-fg-faint underline" onClick={() => setPicked([])}>取消勾选</button>
+        </div>
+      )}
+      {stats?.byMonth && stats.byMonth.length > 0 && (
+        <div className="mb-3 flex items-end gap-1.5">
+          {stats.byMonth.slice(0, 8).reverse().map((m) => {
+            const max = Math.max(...stats.byMonth!.map((x) => x.count), 1);
+            return (
+              <div key={m.month} className="flex w-10 flex-col items-center gap-1" title={`${m.month} ${m.count} 个 · ${formatBytes(m.bytes)}`}>
+                <div className="w-full rounded-sm bg-accent/70" style={{ height: `${Math.max(4, (m.count / max) * 36)}px` }} />
+                <span className="text-[9px] text-fg-faint">{m.month.slice(5)}</span>
+              </div>
+            );
+          })}
+          <span className="mb-3 ml-1 text-[10px] text-fg-faint">月度入库</span>
         </div>
       )}
       {stats?.big && stats.big.length > 0 && (
@@ -360,6 +409,10 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
     queryKey: ["asset", props.id],
     queryFn: () => api<Asset>(`/api/assets/${props.id}`),
   });
+  const { data: refs } = useQuery({
+    queryKey: ["asset-refs", props.id],
+    queryFn: () => api<Array<{ projectId: string; projectName: string; kind: "canvas" | "timeline" }>>(`/api/assets/${props.id}/refs`),
+  });
 
   const renameMutation = useMutation({
     mutationFn: (title: string) => apiJson<Asset>(`/api/assets/${props.id}`, "patch", { title }),
@@ -441,6 +494,11 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
           <MetaItem label="入库时间" value={formatTime(asset.createdAt)} />
         </div>
         <AssetMetaEditor asset={asset} />
+        {refs && refs.length > 0 && (
+          <p className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+            {refs.map((r) => `${r.projectName} 的${r.kind === "timeline" ? "时间线" : "画布"}`).join("、")}还在用，先撤下来再删。
+          </p>
+        )}
 
         {/* 操作 */}
         <div className="flex justify-between">
@@ -460,8 +518,10 @@ function AssetPreview(props: { id: string; onClose: () => void; onDelete: (id: s
             </button>
           </div>
           <button
-            className="flex items-center gap-1.5 rounded-lg border border-red-900/50 px-4 py-1.5 text-sm text-red-400 hover:bg-red-950/40"
+            className="flex items-center gap-1.5 rounded-lg border border-red-900/50 px-4 py-1.5 text-sm text-red-400 hover:bg-red-950/40 disabled:opacity-40"
+            disabled={(refs?.length ?? 0) > 0}
             onClick={() => {
+              if (refs && refs.length > 0) return;
               if (confirm(`删除资产「${asset.title}」？文件将一并删除。`)) props.onDelete(asset.id);
             }}
           >
