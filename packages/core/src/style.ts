@@ -22,6 +22,9 @@ export interface StylePackManifest {
   defaultSubstyle?: string;
   ready?: boolean;
   unavailableReason?: string;
+  /** builtin 不能删；user 是添加进来的 */
+  source?: "builtin" | "user";
+  originUrl?: string;
   promptFiles?: {
     style?: string;
     hard?: string;
@@ -43,6 +46,9 @@ export interface StylePackPublic {
   ready: boolean;
   unavailableReason: string | null;
   directory: string;
+  source: "builtin" | "user";
+  originUrl: string | null;
+  editable: boolean;
 }
 
 export interface PaletteColor {

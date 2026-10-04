@@ -1,16 +1,41 @@
 import { readFileSync } from "node:fs";
 import { Hono } from "hono";
+import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
+import { deleteUserStyle, type StyleImportPayload } from "../services/styleImport";
 import { listPacks, loadPack, packCover } from "../services/styles";
 
 export const stylesRoutes = new Hono();
 
 stylesRoutes.get("/", (c) => ok(c, listPacks()));
 
-stylesRoutes.get("/:id", (c) => {
-  const pack = loadPack(c.req.param("id"));
-  if (!pack) return err(c, "风格包不存在。把符合契约的目录放到 stylePacks/ 再刷新。", 404);
-  return ok(c, pack.public);
+stylesRoutes.post("/import", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as StyleImportPayload;
+  if (!body.name?.trim()) return err(c, "先给这套风格起个名字，比如「电商带货」");
+  if (body.mode === "url" && !body.url?.trim()) return err(c, "把 GitHub 技能链接贴进来");
+  if (body.mode === "write" && !body.brief?.trim() && !body.text?.trim()) {
+    return err(c, "写几句这套风格长什么样，平台帮你写成技能");
+  }
+  if (body.mode === "upload" && !body.text?.trim()) return err(c, "上传 SKILL.md，或把内容贴进来");
+  const job = jobQueue.submit("style.import", {
+    mode: body.mode,
+    name: body.name.trim(),
+    url: body.url,
+    brief: body.brief,
+    text: body.text,
+    filename: body.filename,
+    endpointId: body.endpointId,
+  });
+  return ok(c, job);
+});
+
+stylesRoutes.delete("/:id", (c) => {
+  try {
+    if (!deleteUserStyle(c.req.param("id"))) return err(c, "风格不存在", 404);
+    return ok(c, { removed: true });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e));
+  }
 });
 
 stylesRoutes.get("/:id/cover", (c) => {
@@ -20,4 +45,10 @@ stylesRoutes.get("/:id/cover", (c) => {
   return new Response(Buffer.from(data), {
     headers: { "Content-Type": cover.mime, "Cache-Control": "public, max-age=3600" },
   });
+});
+
+stylesRoutes.get("/:id", (c) => {
+  const pack = loadPack(c.req.param("id"));
+  if (!pack) return err(c, "风格包不存在。点「添加风格」或把目录放到 stylePacks/。", 404);
+  return ok(c, pack.public);
 });

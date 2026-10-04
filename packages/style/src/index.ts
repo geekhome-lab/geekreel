@@ -7,6 +7,9 @@ import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { PaletteDoc, StylePackManifest, StylePackPublic } from "@vw/core";
 
+export * from "./fromSkill";
+export * from "./writePack";
+
 export interface LoadedPack {
   public: StylePackPublic;
   manifest: StylePackManifest;
@@ -18,9 +21,11 @@ export interface LoadedPack {
   substyleBlocks: Record<string, string>;
 }
 
-function repoStylePacksDir(): string {
+export function repoStylePacksDir(): string {
   return resolve(join(import.meta.dir, "../../../stylePacks"));
 }
+
+const BUILTIN_IDS = new Set(["smy-animation", "whiteboard"]);
 
 function readText(dir: string, rel?: string): string {
   if (!rel) return "";
@@ -51,6 +56,10 @@ function loadOne(directory: string): LoadedPack | null {
   }
 
   const ready = manifest.ready !== false;
+  const source: "builtin" | "user" =
+    manifest.source === "user" || (manifest.source !== "builtin" && !BUILTIN_IDS.has(manifest.id))
+      ? "user"
+      : "builtin";
   return {
     directory,
     manifest,
@@ -74,6 +83,9 @@ function loadOne(directory: string): LoadedPack | null {
       ready,
       unavailableReason: ready ? null : (manifest.unavailableReason?.trim() || "这套风格还没开放"),
       directory,
+      source,
+      originUrl: manifest.originUrl?.trim() || null,
+      editable: source === "user",
     },
   };
 }

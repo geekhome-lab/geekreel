@@ -185,6 +185,7 @@ export const jobTypeLabels: Record<string, string> = {
   "analyze.run": "竞品分析",
   "remake.run": "爆款复刻",
   "pipeline.run": "风格流水线",
+  "style.import": "导入风格",
 };
 
 // ---------------------------------------------------------------------------

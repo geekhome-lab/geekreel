@@ -11,6 +11,7 @@ import { analyzeRunHandler } from "./services/analyze";
 import { remakeRunHandler } from "./services/remake";
 import { pipelineRunHandler } from "./services/pipeline";
 import { listPacks } from "./services/styles";
+import { styleImportHandler } from "./services/styleImport";
 import { libraryRoot } from "./services/library";
 import { detectYtdlp } from "@vw/analyze";
 
@@ -23,6 +24,7 @@ jobQueue.register("radar.digest", digestRadarHandler, 1);
 jobQueue.register("analyze.run", analyzeRunHandler, 1);
 jobQueue.register("remake.run", remakeRunHandler, 2);
 jobQueue.register("pipeline.run", pipelineRunHandler, 1);
+jobQueue.register("style.import", styleImportHandler, 2);
 jobQueue.recover();
 seedRadarSources();
 startRadarScheduler();

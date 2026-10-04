@@ -8,6 +8,7 @@
   "requiredCapabilities": ["llm", "image"],
   "defaultSubstyle": "flat",
   "ready": true,
+  "source": "builtin",
   "substyles": [
     { "id": "flat", "name": "手绘平涂", "hint": "矿物色块，最稳" },
     { "id": "ink", "name": "石蓝淡墨绘本", "hint": "浅淡墨色，留白多" },

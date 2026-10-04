@@ -38,7 +38,7 @@ function WsBridge() {
           qc.invalidateQueries({ queryKey: ["asset-stats"] });
           qc.invalidateQueries({ queryKey: ["asset"] });
         }
-        if ((ev.job.type.startsWith("radar.") || ev.job.type === "analyze.run" || ev.job.type === "remake.run" || ev.job.type === "pipeline.run") && (ev.job.status === "done" || ev.job.status === "failed")) {
+        if ((ev.job.type.startsWith("radar.") || ev.job.type === "analyze.run" || ev.job.type === "remake.run" || ev.job.type === "pipeline.run" || ev.job.type === "style.import") && (ev.job.status === "done" || ev.job.status === "failed")) {
           qc.invalidateQueries({ queryKey: ["radar-board"] });
           qc.invalidateQueries({ queryKey: ["radar-sources"] });
           qc.invalidateQueries({ queryKey: ["radar-status"] });

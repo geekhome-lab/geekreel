@@ -1,15 +1,17 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Job, StylePackPublic } from "@vw/core";
 import type { Capability, ModelEndpoint } from "@vw/models";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
 import { waitForJob } from "../lib/runGen";
-import { iconPlay } from "../lib/icons";
+import { iconPlay, iconPlus, iconTrash } from "../lib/icons";
+import { Modal } from "../components/modal";
 
 export function StylesPage() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [params] = useSearchParams();
   const setCurrentProject = useAppStore((s) => s.setCurrentProject);
   const setPendingAutoRun = useAppStore((s) => s.setPendingAutoRun);
@@ -29,6 +31,7 @@ export function StylesPage() {
   const [story, setStory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
 
   const chosenSub = substyle || pack?.defaultSubstyle || "";
 
@@ -68,16 +71,36 @@ export function StylesPage() {
     }
   };
 
+  const remove = async () => {
+    if (!pack?.editable) return;
+    if (!confirm(`删除「${pack.name}」？只删风格包，已做的项目还在。`)) return;
+    try {
+      await apiJson(`/api/styles/${pack.id}`, "delete");
+      qc.invalidateQueries({ queryKey: ["styles"] });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   return (
     <div className="mx-auto flex h-full max-w-6xl gap-6 p-6">
       <div className="w-[300px] shrink-0">
         <h1 className="text-lg font-semibold">风格中心</h1>
-        <p className="mt-0.5 mb-4 text-xs text-fg-faint">
-          选一套风格，写一句故事，自动拆 5 集并搭好画布。新风格只要丢进项目的 stylePacks/ 文件夹。
+        <p className="mt-0.5 mb-3 text-xs text-fg-faint">
+          内置两套。第三套自己加：贴 GitHub 技能链接、让平台写，或上传 SKILL.md。
         </p>
-        <button className="mb-3 text-[11px] text-fg-faint underline hover:text-fg" onClick={() => refetch()}>
-          重新扫描
-        </button>
+        <div className="mb-3 flex gap-2">
+          <button
+            className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-accent px-3 py-2 text-xs font-medium text-black"
+            onClick={() => setAdding(true)}
+          >
+            {iconPlus({ width: 12, height: 12 })}
+            添加风格
+          </button>
+          <button className="rounded-lg border border-line px-3 py-2 text-[11px] text-fg-faint hover:text-fg" onClick={() => refetch()}>
+            扫描
+          </button>
+        </div>
         <div className="space-y-2">
           {packs?.map((p) => (
             <button
@@ -85,6 +108,7 @@ export function StylesPage() {
               onClick={() => {
                 setActiveId(p.id);
                 setSubstyle(p.defaultSubstyle ?? "");
+                setError("");
               }}
               className={`w-full overflow-hidden rounded-xl border text-left ${
                 pack?.id === p.id ? "border-accent bg-panel-2" : "border-line bg-panel hover:border-accent-dim"
@@ -94,6 +118,7 @@ export function StylesPage() {
               <div className="px-3 py-2">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{p.name}</span>
+                  {p.source === "user" && <span className="text-[10px] text-accent">自建</span>}
                   {!p.ready && <span className="text-[10px] text-fg-faint">未开放</span>}
                 </div>
                 <p className="mt-0.5 line-clamp-2 text-[11px] text-fg-faint">{p.summary}</p>
@@ -104,15 +129,23 @@ export function StylesPage() {
       </div>
 
       <div className="min-w-0 flex-1 overflow-y-auto">
-        {!pack && <p className="text-sm text-fg-faint">还没有风格包。把目录放到项目根下的 stylePacks/。</p>}
+        {!pack && <p className="text-sm text-fg-faint">还没有风格。点左上角「添加风格」。</p>}
         {pack && (
           <div className="space-y-4">
-            <div>
-              <h2 className="text-lg font-semibold">{pack.name}</h2>
-              <p className="mt-1 text-sm text-fg-dim">{pack.summary}</p>
-              <p className="mt-2 text-[11px] text-fg-faint">
-                需要：{pack.requiredCapabilities.join("、")} · 版本 {pack.version}
-              </p>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold">{pack.name}</h2>
+                <p className="mt-1 text-sm text-fg-dim">{pack.summary}</p>
+                <p className="mt-2 text-[11px] text-fg-faint">
+                  需要：{pack.requiredCapabilities.join("、")} · {pack.source === "user" ? "自建" : "内置"}
+                  {pack.originUrl ? " · 来自链接" : ""}
+                </p>
+              </div>
+              {pack.editable && (
+                <button className="rounded-lg border border-line p-2 text-fg-faint hover:text-red-300" onClick={remove} title="删除这套自建风格">
+                  {iconTrash({})}
+                </button>
+              )}
             </div>
 
             {!pack.ready && (
@@ -164,12 +197,20 @@ export function StylesPage() {
               {iconPlay({ width: 14, height: 14 })}
               {busy ? "拆集中…" : "用此风格做成片"}
             </button>
-            <p className="text-[11px] text-fg-faint">
-              自己做风格：复制 stylePacks/smy-animation，改 pack.json 和 prompts/，点「重新扫描」。
-            </p>
           </div>
         )}
       </div>
+
+      {adding && (
+        <AddStyleModal
+          onClose={() => setAdding(false)}
+          onAdded={(id) => {
+            setAdding(false);
+            setActiveId(id);
+            qc.invalidateQueries({ queryKey: ["styles"] });
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -182,5 +223,139 @@ function PackCover(props: { pack: StylePackPublic }) {
         <div key={c} className="flex-1" style={{ background: c }} />
       ))}
     </div>
+  );
+}
+
+type AddMode = "url" | "write" | "upload";
+
+function AddStyleModal(props: { onClose: () => void; onAdded: (id: string) => void }) {
+  const [mode, setMode] = useState<AddMode>("url");
+  const [name, setName] = useState("");
+  const [url, setUrl] = useState("");
+  const [brief, setBrief] = useState("");
+  const [fileLabel, setFileLabel] = useState("");
+  const [fileText, setFileText] = useState("");
+  const [filename, setFilename] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const pickFile = async (file: File | undefined) => {
+    if (!file) return;
+    setFileLabel(file.name);
+    setFilename(file.name);
+    if (file.name.toLowerCase().endsWith(".zip")) {
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let bin = "";
+      buf.forEach((b) => {
+        bin += String.fromCharCode(b);
+      });
+      setFileText(btoa(bin));
+    } else {
+      setFileText(await file.text());
+    }
+  };
+
+  const submit = async () => {
+    if (!name.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const job = await apiJson<Job>("/api/styles/import", "post", {
+        mode,
+        name: name.trim(),
+        url: url.trim() || undefined,
+        brief: brief.trim() || undefined,
+        text: mode === "upload" ? fileText : brief.trim() || undefined,
+        filename: mode === "upload" ? filename : undefined,
+      });
+      const done = await waitForJob(job.id, 3 * 60_000);
+      const result = JSON.parse(done.resultJson ?? "{}") as { packId?: string };
+      if (!result.packId) throw new Error("没有写成风格包");
+      props.onAdded(result.packId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="添加风格" onClose={props.onClose} width="w-[520px]">
+      <p className="mb-3 text-xs text-fg-faint">
+        给新风格起个名字，再选一种来源。写成之后和上美影一样能直接做短剧。
+      </p>
+      <div className="mb-3 flex gap-1 rounded-lg border border-line bg-panel-2 p-1">
+        {(
+          [
+            ["url", "贴技能链接"],
+            ["write", "平台来写"],
+            ["upload", "上传文件"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            className={`flex-1 rounded-md px-2 py-1.5 text-xs ${mode === k ? "bg-accent text-black" : "text-fg-dim"}`}
+            onClick={() => setMode(k)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      <input
+        className="mb-2 w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+        placeholder="风格名字，例如：电商带货"
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+      />
+      {mode === "url" && (
+        <>
+          <input
+            className="mb-2 w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+            placeholder="GitHub 仓库 / 技能目录 / SKILL.md 链接"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+          />
+          <textarea
+            rows={2}
+            className="w-full resize-none rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+            placeholder="可选：转成什么样，比如「只要出图提示词，做成竖屏带货风」"
+            value={brief}
+            onChange={(e) => setBrief(e.target.value)}
+          />
+        </>
+      )}
+      {mode === "write" && (
+        <textarea
+          rows={5}
+          className="w-full resize-none rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
+          placeholder="形容这套风格。例如：像短视频带货，商品大特写，红金主色，口播字幕靠下。"
+          value={brief}
+          onChange={(e) => setBrief(e.target.value)}
+        />
+      )}
+      {mode === "upload" && (
+        <label className="block cursor-pointer rounded-lg border border-dashed border-line px-3 py-4 text-center text-xs text-fg-dim hover:border-accent-dim">
+          <input
+            type="file"
+            accept=".md,.json,.txt,.zip"
+            className="hidden"
+            onChange={(e) => void pickFile(e.target.files?.[0])}
+          />
+          {fileLabel || "上传 SKILL.md / pack.json / zip"}
+        </label>
+      )}
+      {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+      <div className="mt-4 flex justify-end gap-2">
+        <button className="rounded-lg border border-line px-3 py-1.5 text-sm text-fg-dim" onClick={props.onClose}>
+          取消
+        </button>
+        <button
+          className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-black disabled:opacity-40"
+          disabled={!name.trim() || busy}
+          onClick={submit}
+        >
+          {busy ? "转换中…" : "转成这个风格"}
+        </button>
+      </div>
+    </Modal>
   );
 }
