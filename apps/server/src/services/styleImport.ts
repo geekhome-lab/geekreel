@@ -15,6 +15,7 @@ import {
 import type { JobHandler } from "../jobs/queue";
 import { resolveEndpoint } from "./models";
 import { extraPackDirs, loadPack } from "./styles";
+import { chatMetered } from "./usage";
 
 export interface StyleImportPayload {
   mode: "url" | "write" | "upload";
@@ -31,7 +32,7 @@ async function draftFromLlm(system: string, prompt: string, endpointId: string |
   const adapter = endpoint ? getAdapter(endpoint.adapterType) : null;
   if (!endpoint || !adapter?.chat) return fallback();
   try {
-    const text = await adapter.chat(endpoint.config, { system, prompt });
+    const text = await chatMetered(adapter, endpoint, { system, prompt }, { jobType: "style.import" });
     const parsed = parseStyleDraft(text, fallback().name, undefined);
     return parsed.styleBlock ? parsed : fallback();
   } catch {

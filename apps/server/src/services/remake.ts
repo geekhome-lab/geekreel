@@ -9,6 +9,7 @@ import { newId, now } from "../lib/resp";
 import { getReport } from "./analyze";
 import { libraryRoot } from "./library";
 import { resolveEndpoint } from "./models";
+import { chatMetered } from "./usage";
 
 interface TplRow {
   id: string;
@@ -112,10 +113,15 @@ export const remakeRunHandler: JobHandler = async (job, ctx) => {
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
-  const text = await adapter.chat(endpoint.config, {
-    system: REMAKE_SYSTEM,
-    prompt: remakePrompt(tpl.doc, variables),
-  });
+  const text = await chatMetered(
+    adapter,
+    endpoint,
+    {
+      system: REMAKE_SYSTEM,
+      prompt: remakePrompt(tpl.doc, variables),
+    },
+    { jobType: "remake.run" },
+  );
   const shots = parseRemakeShots(text, tpl.doc);
   if (shots.length === 0) throw new Error("没有生成分镜");
 

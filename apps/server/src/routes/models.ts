@@ -9,6 +9,7 @@ import {
   setDefaultEndpoint,
   updateEndpoint,
 } from "../services/models";
+import { usageSummary } from "../services/usage";
 
 export const modelsRoutes = new Hono();
 
@@ -89,4 +90,9 @@ modelsRoutes.post("/endpoints/:id/test", async (c) => {
   if (!adapter) return err(c, "适配器不存在", 500);
   const result = await adapter.test(ep.config);
   return ok(c, result);
+});
+
+modelsRoutes.get("/usage", (c) => {
+  const days = Math.min(365, Math.max(1, Number(c.req.query("days") ?? 30) || 30));
+  return ok(c, usageSummary(days));
 });

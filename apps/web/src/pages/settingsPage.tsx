@@ -17,11 +17,12 @@ export function SettingsPage() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (libraryRoot: string) => apiJson<PublicSettings>("/api/settings", "put", { libraryRoot }),
+    mutationFn: (libraryRoot: string) =>
+      apiJson<PublicSettings & { migrateJobId?: string; message?: string }>("/api/settings", "put", { libraryRoot }),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["settings"] });
-      if (data.assetCount > 0) {
-        setMessage("已更新资产库目录。注意：已有资产文件仍在原目录，请手动迁移后重新导入（自动迁移将在后续版本提供）。");
+      if (data.migrateJobId) {
+        setMessage(data.message || "正在把旧文件搬到新目录，去任务中心看进度。");
       } else {
         setMessage("已更新资产库目录。");
       }
@@ -37,7 +38,7 @@ export function SettingsPage() {
     <div className="max-w-2xl p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold">设置</h1>
-        <p className="mt-0.5 text-xs text-fg-faint">全局配置，更多选项（模型端点、推送渠道）将在后续里程碑加入</p>
+        <p className="mt-0.5 text-xs text-fg-faint">换目录会自动把已有文件搬过去。模型单价在「模型」页填。</p>
       </div>
 
       <div className="space-y-4">

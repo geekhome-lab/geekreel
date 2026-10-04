@@ -4,6 +4,7 @@ import type { PublicSettings } from "@vw/core";
 import { detectBins } from "@vw/media";
 import { dataDir, version } from "../config";
 import { db } from "../db";
+import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
 import { libraryRoot, setLibraryRoot } from "../services/library";
 
@@ -41,6 +42,12 @@ settingsRoutes.put("/", async (c) => {
   }
   if (!existsSync(root)) return err(c, "目录不存在");
 
+  const old = libraryRoot();
+  const count = db.query("SELECT COUNT(*) AS n FROM assets").get() as { n: number };
+  if (old !== root && count.n > 0) {
+    const job = jobQueue.submit("asset.migrate", { from: old, to: root });
+    return ok(c, { ...(await publicSettings()), migrateJobId: job.id, message: "正在把旧文件搬到新目录，去任务中心看进度。" });
+  }
   setLibraryRoot(root);
   return ok(c, await publicSettings());
 });

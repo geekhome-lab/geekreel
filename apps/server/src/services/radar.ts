@@ -17,6 +17,7 @@ import { newId, now } from "../lib/resp";
 import { wsHub } from "../ws";
 import { getEndpoint, listEndpoints, resolveEndpoint } from "./models";
 import { deliverToIds } from "./push";
+import { chatMetered } from "./usage";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { libraryRoot } from "./library";
@@ -313,11 +314,16 @@ const runFetch: JobHandler = async (job, ctx) => {
   if (!adapter?.chat) throw new Error("这个模型不会聊天，换一个文本模型");
 
   ctx.progress(0.25, `正在问 ${endpoint.name}`);
-  const text = await adapter.chat(endpoint.config, {
-    system: RADAR_SYSTEM,
-    prompt: source.queryTemplate,
-    webSearch: true,
-  });
+  const text = await chatMetered(
+    adapter,
+    endpoint,
+    {
+      system: RADAR_SYSTEM,
+      prompt: source.queryTemplate,
+      webSearch: true,
+    },
+    { jobType: "radar.fetch" },
+  );
 
   ctx.progress(0.7, "整理热点");
   const parsed = parseRadarResponse(text, source.platform);

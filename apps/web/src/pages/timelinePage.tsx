@@ -13,7 +13,7 @@ import {
 } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
-import { submitRender, waitForJob } from "../lib/runGen";
+import { submitRender, submitTimelineTts, waitForJob } from "../lib/runGen";
 import { iconPlus, iconUpload } from "../lib/icons";
 import { Modal } from "../components/modal";
 import { AssetPickerModal } from "../components/canvas/assetPickerModal";
@@ -58,6 +58,8 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   const [picking, setPicking] = useState(false);
   const [editingSub, setEditingSub] = useState<string | null>(null);
   const [exportJob, setExportJob] = useState<{ id: string; status: string; assetId?: string; error?: string } | null>(null);
+  const [ttsBusy, setTtsBusy] = useState(false);
+  const [ttsError, setTtsError] = useState("");
   const [saveState, setSaveState] = useState<"saved" | "dirty" | "saving">("saved");
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const srtInput = useRef<HTMLInputElement>(null);
@@ -318,6 +320,26 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         <ToolBtn onClick={() => setPicking(true)}>{iconPlus({ width: 12, height: 12 })} 添加素材</ToolBtn>
         <ToolBtn onClick={() => srtInput.current?.click()}>{iconUpload({ width: 12, height: 12 })} 导入 SRT</ToolBtn>
         <ToolBtn onClick={addSubtitle}>加字幕</ToolBtn>
+        <ToolBtn
+          disabled={ttsBusy}
+          onClick={async () => {
+            setTtsBusy(true);
+            setTtsError("");
+            try {
+              const job = await submitTimelineTts(projectId);
+              await waitForJob(job.id, 15 * 60_000);
+              const next = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
+              setDoc(next.doc);
+              queryClient.invalidateQueries({ queryKey: ["assets"] });
+            } catch (e) {
+              setTtsError(e instanceof Error ? e.message : String(e));
+            } finally {
+              setTtsBusy(false);
+            }
+          }}
+        >
+          {ttsBusy ? "配音中…" : "字幕配音"}
+        </ToolBtn>
         <div className="mx-1 h-4 w-px bg-line" />
         <ToolBtn onClick={splitAtPlayhead}>分割</ToolBtn>
         <ToolBtn onClick={deleteSelected} disabled={!selected}>删除</ToolBtn>
@@ -333,6 +355,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         <span className="ml-2 text-[10px] text-fg-faint">
           {saveState === "saved" ? "已保存" : saveState === "saving" ? "保存中…" : "待保存"}
         </span>
+        {ttsError && <span className="ml-2 text-[11px] text-amber-300">{ttsError}</span>}
         <button
           className="ml-auto rounded-lg bg-accent px-4 py-1.5 text-xs font-medium text-black hover:brightness-110 disabled:opacity-40"
           disabled={exportJob?.status === "running" || exportJob?.status === "submitting"}

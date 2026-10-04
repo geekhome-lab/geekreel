@@ -24,7 +24,7 @@ const intents: Array<{ key: Intent; label: string; hint: string; ready: boolean 
   { key: "remake", label: "复刻爆款", hint: "贴链接拆结构再换成你的", ready: true },
 ];
 
-const modelCaps: Capability[] = ["llm", "image", "video"];
+const modelCaps: Capability[] = ["llm", "image", "video", "tts"];
 
 export function HomePage() {
   const navigate = useNavigate();

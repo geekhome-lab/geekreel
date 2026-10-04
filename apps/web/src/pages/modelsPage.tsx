@@ -20,6 +20,26 @@ interface AdapterMeta {
 
 const capabilities: Capability[] = ["llm", "image", "video", "tts"];
 
+interface UsageSummary {
+  totalCost: number;
+  totalCalls: number;
+  promptTokens: number;
+  completionTokens: number;
+  images: number;
+  audioChars: number;
+  byEndpoint: Array<{
+    endpointId: string;
+    name: string;
+    capability: Capability;
+    calls: number;
+    promptTokens: number;
+    completionTokens: number;
+    images: number;
+    cost: number;
+  }>;
+  byDay: Array<{ date: string; calls: number; cost: number }>;
+}
+
 export function ModelsPage() {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<ModelEndpoint | "new" | null>(null);
@@ -34,6 +54,10 @@ export function ModelsPage() {
   const { data: endpoints } = useQuery({
     queryKey: ["model-endpoints"],
     queryFn: () => api<ModelEndpoint[]>("/api/models/endpoints"),
+  });
+  const { data: usage } = useQuery({
+    queryKey: ["model-usage"],
+    queryFn: () => api<UsageSummary>("/api/models/usage?days=30"),
   });
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["model-endpoints"] });
@@ -68,7 +92,7 @@ export function ModelsPage() {
         <div>
           <h1 className="text-lg font-semibold">模型</h1>
           <p className="mt-0.5 text-xs text-fg-faint">
-            自己配置文本 / 图片 / 视频 / 语音模型端点，每种能力设一个默认，画布与流水线可单独指定
+            自己配置文本 / 图片 / 视频 / 语音模型。编辑端点时填单价，下面就能看到花了多少钱。
           </p>
         </div>
         <button
@@ -78,6 +102,33 @@ export function ModelsPage() {
           {iconPlus({})} 添加端点
         </button>
       </div>
+
+      {usage && (
+        <section className="mb-6 rounded-xl border border-line bg-panel p-4">
+          <h2 className="text-xs font-medium text-fg-faint">近 30 天花费</h2>
+          <div className="mt-2 flex flex-wrap gap-6">
+            <div>
+              <div className="text-2xl font-semibold tabular-nums">¥{usage.totalCost.toFixed(2)}</div>
+              <div className="text-[11px] text-fg-faint">没填单价时显示 0，用量仍会记下</div>
+            </div>
+            <div className="text-xs text-fg-dim">
+              <div>{usage.totalCalls} 次调用</div>
+              <div>{usage.promptTokens + usage.completionTokens} tokens</div>
+              <div>{usage.images} 张图 · {usage.audioChars} 字配音</div>
+            </div>
+          </div>
+          {usage.byEndpoint.length > 0 && (
+            <div className="mt-3 space-y-1">
+              {usage.byEndpoint.map((row) => (
+                <div key={row.endpointId || row.name} className="flex justify-between text-[11px] text-fg-dim">
+                  <span>{row.name} · {capabilityLabels[row.capability]} · {row.calls} 次</span>
+                  <span className="tabular-nums">¥{Number(row.cost).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <div className="space-y-6">
         {capabilities.map((cap) => {
@@ -201,6 +252,9 @@ function EndpointModal(props: {
     for (const f of props.adapters.find((a) => a.type === (ep?.adapterType ?? props.adapters[0]?.type))?.configFields ?? []) {
       init[f.key] = ep?.config[f.key] ?? f.defaultValue ?? "";
     }
+    for (const k of ["priceInput", "priceOutput", "priceImage", "priceTts", "priceVideo", "voice"] as const) {
+      if (ep?.config[k]) init[k] = ep.config[k]!;
+    }
     return init;
   });
   const [webSearch, setWebSearch] = useState(ep?.webSearch ?? false);
@@ -302,6 +356,35 @@ function EndpointModal(props: {
           </label>
         )}
 
+        <div className="grid grid-cols-2 gap-3">
+          {capability === "llm" && (
+            <>
+              <PriceField label="输入单价（元/千 tokens）" value={config.priceInput ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceInput: v }))} />
+              <PriceField label="输出单价（元/千 tokens）" value={config.priceOutput ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceOutput: v }))} />
+            </>
+          )}
+          {capability === "image" && (
+            <PriceField label="单价（元/张）" value={config.priceImage ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceImage: v }))} />
+          )}
+          {capability === "tts" && (
+            <>
+              <PriceField label="单价（元/千字）" value={config.priceTts ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceTts: v }))} />
+              <div>
+                <label className="mb-1.5 block text-xs text-fg-dim">配音音色</label>
+                <input
+                  className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent-dim"
+                  placeholder="alloy / nova / onyx"
+                  value={config.voice ?? ""}
+                  onChange={(e) => setConfig((m) => ({ ...m, voice: e.target.value }))}
+                />
+              </div>
+            </>
+          )}
+          {capability === "video" && (
+            <PriceField label="单价（元/秒）" value={config.priceVideo ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceVideo: v }))} />
+          )}
+        </div>
+
         {error && <div className="text-xs text-red-400">{error}</div>}
 
         <div className="flex justify-end gap-2">
@@ -321,5 +404,22 @@ function EndpointModal(props: {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function PriceField(props: { label: string; value: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <label className="mb-1.5 block text-xs text-fg-dim">{props.label}</label>
+      <input
+        type="number"
+        min="0"
+        step="0.0001"
+        className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent-dim"
+        placeholder="选填"
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </div>
   );
 }

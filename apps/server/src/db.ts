@@ -195,6 +195,25 @@ CREATE TABLE IF NOT EXISTS pipelines (
   updatedAt INTEGER NOT NULL
 )`);
 
+db.run(`
+CREATE TABLE IF NOT EXISTS model_usage (
+  id TEXT PRIMARY KEY,
+  endpointId TEXT,
+  endpointName TEXT NOT NULL DEFAULT '',
+  capability TEXT NOT NULL,
+  projectId TEXT,
+  jobType TEXT NOT NULL DEFAULT '',
+  promptTokens INTEGER NOT NULL DEFAULT 0,
+  completionTokens INTEGER NOT NULL DEFAULT 0,
+  images INTEGER NOT NULL DEFAULT 0,
+  audioChars INTEGER NOT NULL DEFAULT 0,
+  videoSec REAL NOT NULL DEFAULT 0,
+  cost REAL NOT NULL DEFAULT 0,
+  createdAt INTEGER NOT NULL
+)`);
+db.run("CREATE INDEX IF NOT EXISTS idx_usage_created ON model_usage(createdAt DESC)");
+db.run("CREATE INDEX IF NOT EXISTS idx_usage_endpoint ON model_usage(endpointId, createdAt DESC)");
+
 function ensureColumn(table: string, column: string, ddl: string) {
   const cols = db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === column)) db.run(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);

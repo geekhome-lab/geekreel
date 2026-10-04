@@ -120,8 +120,12 @@ assetsRoutes.patch("/:id", async (c) => {
 });
 
 assetsRoutes.delete("/:id", (c) => {
-  if (!deleteAsset(c.req.param("id"))) return err(c, "资产不存在", 404);
-  return ok(c, { deleted: true });
+  try {
+    if (!deleteAsset(c.req.param("id"))) return err(c, "资产不存在", 404);
+    return ok(c, { deleted: true });
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 409);
+  }
 });
 
 /** 取文件：variant = original | thumb | proxy，支持 Range（视频拖动播放） */

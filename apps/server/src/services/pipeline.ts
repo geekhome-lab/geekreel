@@ -26,6 +26,7 @@ import { newId, now } from "../lib/resp";
 import { libraryRoot, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
 import { loadPack } from "./styles";
+import { chatMetered } from "./usage";
 
 interface PipeRow {
   id: string;
@@ -207,10 +208,15 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
     : "通用短剧，画面写清楚主体和动作即可。";
   let bible: DramaBible;
   try {
-    const text = await adapter.chat(endpoint.config, {
-      system: pack?.bibleSystem || NOVEL_DRAMA_SYSTEM,
-      prompt: novelDramaPrompt(story, packHint),
-    });
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: pack?.bibleSystem || NOVEL_DRAMA_SYSTEM,
+        prompt: novelDramaPrompt(story, packHint),
+      },
+      { projectId, jobType: "pipeline.run" },
+    );
     bible = parseDramaBible(text, story);
   } catch {
     bible = parseDramaBible("", story);

@@ -10,6 +10,12 @@ jobsRoutes.get("/", (c) => {
   return ok(c, jobQueue.list({ status }));
 });
 
+jobsRoutes.get("/:id", (c) => {
+  const job = jobQueue.get(c.req.param("id"));
+  if (!job) return err(c, "任务不存在", 404);
+  return ok(c, job);
+});
+
 jobsRoutes.post("/:id/cancel", (c) => {
   const job = jobQueue.cancel(c.req.param("id"));
   if (!job) return err(c, "任务不存在", 404);

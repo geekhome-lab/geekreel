@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, renameSync, unlinkSync, copyFileSync, linkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, copyFileSync, linkSync, statSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import {
   buildAssetRelPath,
@@ -149,7 +149,35 @@ export function renameAsset(id: string, newTitle: string): Asset {
 // TODO(M2+)：画布/时间线上线后，删除前做引用检查
 // ---------------------------------------------------------------------------
 
+/** 画布/时间线还引用着就不能删 */
+export function countAssetRefs(id: string): number {
+  let n = 0;
+  const projects = db.query("SELECT id, directory FROM projects").all() as Array<{ id: string; directory: string }>;
+  for (const p of projects) {
+    const timeline = join(p.directory, "timeline", "main.json");
+    if (fileMentions(timeline, id)) n++;
+    const canvasDir = join(p.directory, "canvas");
+    if (existsSync(canvasDir) && statSync(canvasDir).isDirectory()) {
+      for (const name of readdirSync(canvasDir)) {
+        if (name.endsWith(".json") && fileMentions(join(canvasDir, name), id)) n++;
+      }
+    }
+  }
+  return n;
+}
+
+function fileMentions(abs: string, id: string): boolean {
+  if (!existsSync(abs)) return false;
+  try {
+    return readFileSync(abs, "utf8").includes(id);
+  } catch {
+    return false;
+  }
+}
+
 export function deleteAsset(id: string): boolean {
+  const refs = countAssetRefs(id);
+  if (refs > 0) throw new Error("时间线或画布还在用这条素材，先撤下来再删");
   const asset = getAsset(id);
   if (!asset) return false;
   for (const rel of [asset.path, asset.thumbPath, asset.proxyPath]) {

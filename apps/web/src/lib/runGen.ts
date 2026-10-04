@@ -73,3 +73,11 @@ export async function submitRender(projectId: string): Promise<Job> {
     body: JSON.stringify({ projectId }),
   });
 }
+
+export async function submitTimelineTts(projectId: string): Promise<Job> {
+  return api<Job>("/api/timeline/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ projectId }),
+  });
+}

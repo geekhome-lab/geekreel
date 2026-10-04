@@ -43,8 +43,23 @@ export interface TestResult {
   message: string;
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export interface ChatResult {
+  text: string;
+  usage: TokenUsage;
+}
+
 export interface ImageGenResult {
   /** 图片二进制内容（PNG） */
+  data: Uint8Array;
+  mime: string;
+}
+
+export interface SpeechResult {
   data: Uint8Array;
   mime: string;
 }
@@ -58,11 +73,52 @@ export interface ModelAdapter {
   chat?(
     config: Record<string, string>,
     req: { prompt: string; system?: string; webSearch?: boolean },
-  ): Promise<string>;
+  ): Promise<ChatResult>;
   generateImage?(
     config: Record<string, string>,
     req: { prompt: string; size?: string; signal?: AbortSignal },
   ): Promise<ImageGenResult>;
+  generateSpeech?(
+    config: Record<string, string>,
+    req: { text: string; voice?: string; signal?: AbortSignal },
+  ): Promise<SpeechResult>;
+  transcribe?(
+    config: Record<string, string>,
+    req: { data: Uint8Array; filename: string; mime?: string; signal?: AbortSignal },
+  ): Promise<string>;
+}
+
+export function estimateTokens(text: string): number {
+  const cjk = (text.match(/[\u4e00-\u9fff]/g) ?? []).length;
+  return Math.max(1, Math.round(cjk / 1.5 + (text.length - cjk) / 4));
+}
+
+export function parsePrice(raw: string | undefined): number {
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** 按端点里填的单价算钱。没填单价就是 0，用量照记。 */
+export function computeCost(input: {
+  config: Record<string, string>;
+  promptTokens?: number;
+  completionTokens?: number;
+  images?: number;
+  audioChars?: number;
+  videoSec?: number;
+}): number {
+  const pin = parsePrice(input.config.priceInput);
+  const pout = parsePrice(input.config.priceOutput);
+  const pimg = parsePrice(input.config.priceImage);
+  const ptts = parsePrice(input.config.priceTts);
+  const pvid = parsePrice(input.config.priceVideo);
+  const yuan =
+    ((input.promptTokens ?? 0) / 1000) * pin +
+    ((input.completionTokens ?? 0) / 1000) * pout +
+    (input.images ?? 0) * pimg +
+    ((input.audioChars ?? 0) / 1000) * ptts +
+    (input.videoSec ?? 0) * pvid;
+  return Math.round(yuan * 10000) / 10000;
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +161,7 @@ export const openaiCompatible: ModelAdapter = {
   configFields: [
     { key: "baseUrl", label: "Base URL", type: "text", required: true, placeholder: "https://api.deepseek.com/v1" },
     { key: "apiKey", label: "API Key", type: "password", required: true, placeholder: "sk-…" },
-    { key: "model", label: "模型名", type: "text", required: true, placeholder: "deepseek-chat / gpt-image-1 / …" },
+    { key: "model", label: "模型名", type: "text", required: true, placeholder: "deepseek-chat / gpt-image-1 / tts-1 / whisper-1" },
   ],
 
   async test(config) {
@@ -131,10 +187,20 @@ export const openaiCompatible: ModelAdapter = {
         body: JSON.stringify({ model: config.model, messages, ...extra }),
       });
       if (!res.ok) throw new Error(await readError(res));
-      const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const json = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
       const text = json.choices?.[0]?.message?.content;
       if (!text) throw new Error("模型返回为空");
-      return text;
+      const prompt = `${req.system ?? ""}\n${req.prompt}`;
+      return {
+        text,
+        usage: {
+          promptTokens: json.usage?.prompt_tokens ?? estimateTokens(prompt),
+          completionTokens: json.usage?.completion_tokens ?? estimateTokens(text),
+        },
+      };
     };
     if (req.webSearch) {
       try {
@@ -177,6 +243,39 @@ export const openaiCompatible: ModelAdapter = {
       return { data: new Uint8Array(await img.arrayBuffer()), mime: "image/png" };
     }
     throw new Error("模型未返回图片");
+  },
+
+  async generateSpeech(config, req) {
+    const res = await openaiFetch(config, "/audio/speech", {
+      method: "POST",
+      body: JSON.stringify({
+        model: config.model || "tts-1",
+        input: req.text.slice(0, 4096),
+        voice: req.voice || config.voice || "alloy",
+      }),
+      signal: req.signal ?? null,
+    });
+    if (!res.ok) throw new Error(await readError(res));
+    return {
+      data: new Uint8Array(await res.arrayBuffer()),
+      mime: res.headers.get("content-type") || "audio/mpeg",
+    };
+  },
+
+  async transcribe(config, req) {
+    const form = new FormData();
+    const file = new File([Buffer.from(req.data)], req.filename || "audio.wav", { type: req.mime || "audio/wav" });
+    form.append("file", file);
+    form.append("model", config.model || "whisper-1");
+    const res = await fetch(joinUrl(config.baseUrl ?? "", "/audio/transcriptions"), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${config.apiKey ?? ""}` },
+      body: form,
+      signal: req.signal ?? null,
+    });
+    if (!res.ok) throw new Error(await readError(res));
+    const json = (await res.json()) as { text?: string };
+    return (json.text ?? "").trim();
   },
 };
 

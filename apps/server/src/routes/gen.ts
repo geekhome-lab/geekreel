@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { getAdapter } from "@vw/models";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
-import { resolveEndpoint } from "../services/models";
+import { listEndpoints, resolveEndpoint } from "../services/models";
+import { chatMetered } from "../services/usage";
 
 export const genRoutes = new Hono();
 
@@ -21,7 +22,7 @@ genRoutes.post("/chat", async (c) => {
   if (!adapter?.chat) return err(c, `适配器 ${endpoint.adapterType} 不支持文本对话`, 500);
 
   try {
-    const text = await adapter.chat(endpoint.config, { prompt: body.prompt, system: body.system });
+    const text = await chatMetered(adapter, endpoint, { prompt: body.prompt, system: body.system }, { jobType: "gen.chat" });
     return ok(c, { text, endpointId: endpoint.id });
   } catch (e) {
     return err(c, e instanceof Error ? e.message : String(e), 502);
@@ -44,6 +45,25 @@ genRoutes.post("/image", async (c) => {
       size: body.size,
       endpointId: body.endpointId,
     },
+    body.projectId ?? null,
+  );
+  return ok(c, job);
+});
+
+/** 提交配音任务 */
+genRoutes.post("/tts", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    text?: string;
+    endpointId?: string;
+    projectId?: string;
+  };
+  if (!body.text?.trim()) return err(c, "先写要说的话");
+  if (!listEndpoints("tts").some((e) => e.enabled)) {
+    return err(c, "还没有语音模型。到「模型」页加一个，模型名一般是 tts-1。", 422);
+  }
+  const job = jobQueue.submit(
+    "gen.tts",
+    { text: body.text.trim(), endpointId: body.endpointId },
     body.projectId ?? null,
   );
   return ok(c, job);

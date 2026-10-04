@@ -5,6 +5,7 @@ import { emptyTimelineDoc, type TimelineDoc } from "@vw/core";
 import { db } from "../db";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
+import { listEndpoints } from "../services/models";
 
 /**
  * 时间线文档：项目目录 timeline/main.json（M3 一个项目一条主时间线）。
@@ -124,5 +125,17 @@ timelineRoutes.post("/render", async (c) => {
   if (!body.projectId) return err(c, "缺少 projectId");
   if (!projectDir(body.projectId)) return err(c, "项目不存在", 404);
   const job = jobQueue.submit("timeline.render", { projectId: body.projectId }, body.projectId);
+  return ok(c, job);
+});
+
+/** 字幕轨逐条配音，落到音频轨 */
+timelineRoutes.post("/tts", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { projectId?: string; endpointId?: string };
+  if (!body.projectId) return err(c, "缺少 projectId");
+  if (!projectDir(body.projectId)) return err(c, "项目不存在", 404);
+  if (!listEndpoints("tts").some((e) => e.enabled)) {
+    return err(c, "还没有语音模型。到「模型」页加一个，模型名一般是 tts-1。", 422);
+  }
+  const job = jobQueue.submit("timeline.tts", { projectId: body.projectId, endpointId: body.endpointId }, body.projectId);
   return ok(c, job);
 });

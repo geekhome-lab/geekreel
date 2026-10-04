@@ -24,7 +24,7 @@ export const assetTypeLabels: Record<AssetType, string> = {
   text: "文本",
 };
 
-export type AssetSource = "import" | "canvas" | "pipeline" | "remake" | "analyze";
+export type AssetSource = "import" | "canvas" | "pipeline" | "remake" | "analyze" | "tts";
 
 export const assetSourceLabels: Record<AssetSource, string> = {
   import: "导入",
@@ -32,6 +32,7 @@ export const assetSourceLabels: Record<AssetSource, string> = {
   pipeline: "流水线产出",
   remake: "复刻产出",
   analyze: "分析下载",
+  tts: "配音",
 };
 
 export interface Asset {
@@ -180,6 +181,8 @@ export const jobTypeLabels: Record<string, string> = {
   "gen.video": "视频生成",
   "gen.tts": "语音合成",
   "timeline.render": "时间线导出",
+  "timeline.tts": "字幕配音",
+  "gen.chat": "文本对话",
   "radar.fetch": "雷达取热点",
   "radar.digest": "雷达早报",
   "analyze.run": "竞品分析",

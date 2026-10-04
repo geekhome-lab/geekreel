@@ -11,14 +11,15 @@ import {
   parseAnalysisReport,
   sampleFrames,
 } from "@vw/analyze";
-import { detectBins, probe } from "@vw/media";
+import { detectBins, extractAudio, probe } from "@vw/media";
 import { getAdapter } from "@vw/models";
 import { dataDir } from "../config";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { newId, now } from "../lib/resp";
 import { absInLibrary, storeAsset } from "./library";
-import { listEndpoints, resolveEndpoint } from "./models";
+import { getEndpoint, listEndpoints, resolveEndpoint } from "./models";
+import { chatMetered, recordUsage } from "./usage";
 
 interface ReportRow {
   id: string;
@@ -129,6 +130,29 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
     signal: ctx.signal,
   });
 
+  ctx.progress(0.55, "试着转写旁白");
+  let transcript: string | null = null;
+  try {
+    const audioPath = join(workDir, "audio.wav");
+    await extractAudio(bins.ffmpeg, videoAbs, audioPath, { maxSec: 180, signal: ctx.signal });
+    if (existsSync(audioPath)) {
+      const speechEp =
+        resolveEndpoint("tts") ??
+        listEndpoints().map((e) => getEndpoint(e.id, true)).find((e) => e && getAdapter(e.adapterType)?.transcribe) ??
+        null;
+      const tr = speechEp ? getAdapter(speechEp.adapterType)?.transcribe : null;
+      if (speechEp && tr) {
+        const wav = new Uint8Array(readFileSync(audioPath));
+        transcript = (await tr(speechEp.config, { data: wav, filename: "audio.wav", mime: "audio/wav", signal: ctx.signal })) || null;
+        if (transcript) {
+          recordUsage({ endpoint: speechEp, jobType: "analyze.transcribe", audioChars: transcript.length });
+        }
+      }
+    }
+  } catch {
+    transcript = null;
+  }
+
   ctx.progress(0.7, "请文本模型拆解");
   const endpoint = resolveEndpoint("llm", payload.endpointId);
   if (!endpoint) throw new Error("还没有文本模型。分析要靠它读结构和节奏，请到「模型」页添加一个。");
@@ -137,10 +161,15 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
 
   let doc: AnalysisReportDoc;
   try {
-    const text = await adapter.chat(endpoint.config, {
-      system: ANALYZE_SYSTEM,
-      prompt: analysisPrompt({ title, durationMs, frames, transcript: null, sourceUrl }),
-    });
+    const text = await chatMetered(
+      adapter,
+      endpoint,
+      {
+        system: ANALYZE_SYSTEM,
+        prompt: analysisPrompt({ title, durationMs, frames, transcript, sourceUrl }),
+      },
+      { jobType: "analyze.run" },
+    );
     doc = parseAnalysisReport(text);
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -175,13 +204,13 @@ export const analyzeRunHandler: JobHandler = async (job, ctx) => {
     title: doc.title || title,
     report: doc,
     frames,
-    transcript: null,
+    transcript,
     createdAt: now(),
   };
   db.run(
     `INSERT INTO analysis_reports (id, sourceUrl, videoAssetId, title, reportJson, framesJson, transcript, createdAt)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    [report.id, report.sourceUrl, report.videoAssetId, report.title, JSON.stringify(report.report), JSON.stringify(frames), null, report.createdAt],
+    [report.id, report.sourceUrl, report.videoAssetId, report.title, JSON.stringify(report.report), JSON.stringify(frames), transcript, report.createdAt],
   );
   ctx.progress(1, "报告已出");
   return { reportId: id, title: report.title };

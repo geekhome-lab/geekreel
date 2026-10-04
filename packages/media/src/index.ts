@@ -219,6 +219,19 @@ export async function audioWaveform(bin: string, input: string, output: string, 
   });
 }
 
+/** 抽出单声道音频，分析转写用。 */
+export async function extractAudio(
+  bin: string,
+  input: string,
+  output: string,
+  opts?: { maxSec?: number; signal?: AbortSignal },
+) {
+  const args = ["-i", input, "-vn", "-ac", "1", "-ar", "16000"];
+  if (opts?.maxSec && opts.maxSec > 0) args.push("-t", String(opts.maxSec));
+  args.push(output);
+  await runFfmpeg({ bin, args, signal: opts?.signal });
+}
+
 /** 暖米黄纸底静帧。白板动画用，换机器不依赖本机 Python。 */
 export async function paperStill(
   bin: string,
