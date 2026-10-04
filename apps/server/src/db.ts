@@ -86,6 +86,71 @@ CREATE TABLE IF NOT EXISTS canvas_docs (
 )`);
 db.run("CREATE INDEX IF NOT EXISTS idx_canvas_project ON canvas_docs(projectId)");
 
+db.run(`
+CREATE TABLE IF NOT EXISTS radar_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'ai-query',
+  platform TEXT NOT NULL,
+  queryTemplate TEXT NOT NULL,
+  intervalMinutes INTEGER NOT NULL DEFAULT 360,
+  endpointId TEXT,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  lastRunAt INTEGER,
+  lastError TEXT,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS radar_items (
+  id TEXT PRIMARY KEY,
+  sourceId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  url TEXT,
+  heat INTEGER NOT NULL,
+  heatText TEXT NOT NULL DEFAULT '',
+  summary TEXT NOT NULL DEFAULT '',
+  hash TEXT NOT NULL,
+  fetchedAt INTEGER NOT NULL
+)`);
+db.run("CREATE UNIQUE INDEX IF NOT EXISTS idx_radar_items_hash ON radar_items(hash)");
+db.run("CREATE INDEX IF NOT EXISTS idx_radar_items_fetched ON radar_items(fetchedAt DESC)");
+
+db.run(`
+CREATE TABLE IF NOT EXISTS radar_subs (
+  id TEXT PRIMARY KEY,
+  keyword TEXT NOT NULL,
+  platformsJson TEXT NOT NULL DEFAULT '[]',
+  heatThreshold INTEGER NOT NULL DEFAULT 60,
+  quietStart INTEGER,
+  quietEnd INTEGER,
+  channelsJson TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS push_channels (
+  id TEXT PRIMARY KEY,
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  configJson TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  createdAt INTEGER NOT NULL
+)`);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS push_logs (
+  id TEXT PRIMARY KEY,
+  subId TEXT,
+  channelId TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  error TEXT,
+  createdAt INTEGER NOT NULL
+)`);
+
 // ---------------------------------------------------------------------------
 // 设置读写
 // ---------------------------------------------------------------------------

@@ -55,7 +55,10 @@ export interface ModelAdapter {
   capabilities: Capability[];
   configFields: FieldSpec[];
   test(config: Record<string, string>): Promise<TestResult>;
-  chat?(config: Record<string, string>, req: { prompt: string; system?: string }): Promise<string>;
+  chat?(
+    config: Record<string, string>,
+    req: { prompt: string; system?: string; webSearch?: boolean },
+  ): Promise<string>;
   generateImage?(
     config: Record<string, string>,
     req: { prompt: string; size?: string; signal?: AbortSignal },
@@ -122,15 +125,25 @@ export const openaiCompatible: ModelAdapter = {
       ...(req.system ? [{ role: "system", content: req.system }] : []),
       { role: "user", content: req.prompt },
     ];
-    const res = await openaiFetch(config, "/chat/completions", {
-      method: "POST",
-      body: JSON.stringify({ model: config.model, messages }),
-    });
-    if (!res.ok) throw new Error(await readError(res));
-    const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
-    const text = json.choices?.[0]?.message?.content;
-    if (!text) throw new Error("模型返回为空");
-    return text;
+    const once = async (extra: Record<string, unknown> = {}) => {
+      const res = await openaiFetch(config, "/chat/completions", {
+        method: "POST",
+        body: JSON.stringify({ model: config.model, messages, ...extra }),
+      });
+      if (!res.ok) throw new Error(await readError(res));
+      const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+      const text = json.choices?.[0]?.message?.content;
+      if (!text) throw new Error("模型返回为空");
+      return text;
+    };
+    if (req.webSearch) {
+      try {
+        return await once({ enable_search: true });
+      } catch {
+        return await once();
+      }
+    }
+    return once();
   },
 
   async generateImage(config, req) {

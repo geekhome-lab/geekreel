@@ -219,7 +219,8 @@ export function HomePage() {
         )}
 
         <p className="mt-4 text-center text-[11px] text-fg-faint">
-          出图后可到「时间线」拼成片 · 画布自由编排 · 资产库
+          <button className="underline hover:text-fg" onClick={() => navigate("/radar")}>看看今天热点</button>
+          {" · "}出图后到「时间线」拼成片
         </p>
       </div>
     </div>

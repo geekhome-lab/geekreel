@@ -11,6 +11,7 @@ import { TimelinePage } from "./pages/timelinePage";
 import { ModelsPage } from "./pages/modelsPage";
 import { JobsPage } from "./pages/jobsPage";
 import { SettingsPage } from "./pages/settingsPage";
+import { RadarPage } from "./pages/radarPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,7 +36,14 @@ function WsBridge() {
           qc.invalidateQueries({ queryKey: ["asset-stats"] });
           qc.invalidateQueries({ queryKey: ["asset"] });
         }
+        if (ev.job.type.startsWith("radar.") && (ev.job.status === "done" || ev.job.status === "failed")) {
+          qc.invalidateQueries({ queryKey: ["radar-board"] });
+          qc.invalidateQueries({ queryKey: ["radar-sources"] });
+          qc.invalidateQueries({ queryKey: ["radar-status"] });
+        }
       }
+      if (ev.type === "radar.upsert") qc.invalidateQueries({ queryKey: ["radar-board"] });
+      if (ev.type === "push.log") qc.invalidateQueries({ queryKey: ["push-logs"] });
     });
   }, [qc]);
   return null;
@@ -49,6 +57,7 @@ export function App() {
         <Routes>
           <Route element={<Layout />}>
             <Route index element={<HomePage />} />
+            <Route path="/radar" element={<RadarPage />} />
             <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/canvas" element={<CanvasPage />} />
             <Route path="/timeline" element={<TimelinePage />} />

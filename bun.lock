@@ -16,6 +16,8 @@
         "@vw/core": "workspace:*",
         "@vw/media": "workspace:*",
         "@vw/models": "workspace:*",
+        "@vw/push": "workspace:*",
+        "@vw/radar": "workspace:*",
         "hono": "^4.8.0",
       },
       "devDependencies": {
@@ -69,6 +71,28 @@
     "packages/models": {
       "name": "@vw/models",
       "version": "0.1.0",
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
+      },
+    },
+    "packages/push": {
+      "name": "@vw/push",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+      },
+      "devDependencies": {
+        "@types/bun": "^1.2.0",
+        "typescript": "^5.8.0",
+      },
+    },
+    "packages/radar": {
+      "name": "@vw/radar",
+      "version": "0.1.0",
+      "dependencies": {
+        "@vw/core": "workspace:*",
+      },
       "devDependencies": {
         "@types/bun": "^1.2.0",
         "typescript": "^5.8.0",
@@ -303,6 +327,10 @@
     "@vw/media": ["@vw/media@workspace:packages/media"],
 
     "@vw/models": ["@vw/models@workspace:packages/models"],
+
+    "@vw/push": ["@vw/push@workspace:packages/push"],
+
+    "@vw/radar": ["@vw/radar@workspace:packages/radar"],
 
     "@vw/server": ["@vw/server@workspace:apps/server"],
 

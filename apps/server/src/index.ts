@@ -5,13 +5,19 @@ import { jobQueue } from "./jobs/queue";
 import { indexAssetHandler } from "./services/indexer";
 import { genImageHandler } from "./services/generate";
 import { renderTimelineHandler } from "./services/render";
+import { fetchRadarHandler, digestRadarHandler, seedRadarSources } from "./services/radar";
+import { startRadarScheduler } from "./services/scheduler";
 import { libraryRoot } from "./services/library";
 
 // 注册任务处理器
 jobQueue.register("asset.index", indexAssetHandler, 2);
 jobQueue.register("gen.image", genImageHandler, 4);
 jobQueue.register("timeline.render", renderTimelineHandler, 2);
+jobQueue.register("radar.fetch", fetchRadarHandler, 2);
+jobQueue.register("radar.digest", digestRadarHandler, 1);
 jobQueue.recover();
+seedRadarSources();
+startRadarScheduler();
 
 const bins = await detectBins();
 const app = createApp();

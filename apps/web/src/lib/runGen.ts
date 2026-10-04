@@ -24,7 +24,13 @@ export function waitForJob(jobId: string, timeoutMs = 10 * 60_000): Promise<Job>
     const timer = setInterval(async () => {
       try {
         const jobs = useAppStore.getState().liveJobs;
-        if (jobs[jobId]) finish(jobs[jobId]);
+        if (jobs[jobId]) {
+          finish(jobs[jobId]);
+          return;
+        }
+        const list = await api<Job[]>("/api/jobs");
+        const job = list.find((j) => j.id === jobId);
+        if (job) finish(job);
       } catch {
         /* 忽略轮询错误 */
       }

@@ -3,7 +3,9 @@
  * 不依赖任何运行时 API（Node/Bun/浏览器均可引入）。
  */
 
+import type { PushLog, RadarItem } from "./radar";
 export * from "./timeline";
+export * from "./radar";
 
 // ---------------------------------------------------------------------------
 // 资产
@@ -174,6 +176,8 @@ export const jobTypeLabels: Record<string, string> = {
   "gen.video": "视频生成",
   "gen.tts": "语音合成",
   "timeline.render": "时间线导出",
+  "radar.fetch": "雷达取热点",
+  "radar.digest": "雷达早报",
 };
 
 // ---------------------------------------------------------------------------
@@ -188,7 +192,9 @@ export type WsEvent =
   | { type: "hello"; now: number }
   | { type: "job.upsert"; job: Job }
   | { type: "asset.upsert"; asset: Asset }
-  | { type: "asset.remove"; id: string };
+  | { type: "asset.remove"; id: string }
+  | { type: "radar.upsert"; item: RadarItem }
+  | { type: "push.log"; log: PushLog };
 
 // ---------------------------------------------------------------------------
 // 设置
