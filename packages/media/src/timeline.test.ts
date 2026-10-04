@@ -10,6 +10,12 @@ afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
 });
 
+test("短剧竖屏画布是 1080×1920", () => {
+  const doc = emptyTimelineDoc({ portrait: true });
+  expect(doc.width).toBe(1080);
+  expect(doc.height).toBe(1920);
+});
+
 test("buildRenderPlan：空视频轨抛错", () => {
   expect(() =>
     buildRenderPlan(emptyTimelineDoc(), new Map(), { burnSubs: false, outPath: "/tmp/x.mp4" }),

@@ -33,7 +33,15 @@ function bytesToBase64(data: Uint8Array): string {
 
 export async function openaiGenerateVideo(
   config: Record<string, string>,
-  req: { prompt: string; durationSec?: number; signal?: AbortSignal; image?: { mime: string; data: Uint8Array } },
+  req: {
+    prompt: string;
+    durationSec?: number;
+    signal?: AbortSignal;
+    image?: { mime: string; data: Uint8Array };
+    lastFrame?: { mime: string; data: Uint8Array };
+    dialogue?: string;
+    audio?: boolean;
+  },
 ): Promise<VideoGenResult> {
   const headers = {
     "Content-Type": "application/json",
@@ -46,8 +54,12 @@ export async function openaiGenerateVideo(
       model: config.model,
       prompt: req.prompt,
       seconds: String(req.durationSec || 5),
+      ...(req.audio || req.dialogue ? { audio: true } : {}),
       ...(req.image
         ? { image: `data:${req.image.mime || "image/png"};base64,${bytesToBase64(req.image.data)}` }
+        : {}),
+      ...(req.lastFrame
+        ? { last_frame: `data:${req.lastFrame.mime || "image/png"};base64,${bytesToBase64(req.lastFrame.data)}` }
         : {}),
     }),
     signal: req.signal ?? null,

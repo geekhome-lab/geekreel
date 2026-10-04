@@ -13,6 +13,7 @@ import { detectBins, paperStill } from "@vw/media";
 import { getAdapter } from "@vw/models";
 import { injectImagePrompt, type LoadedPack } from "@vw/style";
 import {
+  lockCastIntoPrompt,
   assetsFromCast,
   bibleFromCastPrompt,
   bibleFromWhiteboard,
@@ -125,17 +126,43 @@ function writeCanvas(projectId: string, dir: string, bible: DramaBible, imageEnd
       const y = 20 + ei * 380;
       const textId = `t_${ei}_${si}`;
       const genId = `g_${ei}_${si}`;
-      const prompt = [shot.imagePrompt, shot.line && `字幕：${shot.line}`].filter(Boolean).join("。");
+      const prev = si > 0 ? ep.shots[si - 1] : ei > 0 ? bible.episodes[ei - 1]?.shots.at(-1) : undefined;
+      const prompt = lockCastIntoPrompt({
+        prompt: shot.imagePrompt || shot.visual,
+        cast: bible.cast ?? [],
+        lastFrame: prev?.visual ?? null,
+        dialogue: shot.line || null,
+      });
+      const talking = Boolean(shot.line?.trim());
       nodes.push(
         { id: textId, type: "textNode", position: { x, y: y + 40 }, data: { text: prompt } },
-        {
-          id: genId,
-          type: "imageGenNode",
-          position: { x: x + 300, y },
-          data: { prompt: "", size: "1024x1024", endpointId: imageEndpointId, status: "idle" },
-        },
+        talking
+          ? {
+              id: genId,
+              type: "videoGenNode",
+              position: { x: x + 300, y },
+              data: { prompt: "", durationSec: Math.max(3, (shot.endSec ?? 5) - (shot.startSec ?? 0)), endpointId: null, status: "idle" },
+            }
+          : {
+              id: genId,
+              type: "imageGenNode",
+              position: { x: x + 300, y },
+              data: { prompt: "", size: "1024x1536", endpointId: imageEndpointId, status: "idle" },
+            },
       );
       edges.push({ id: `e_${ei}_${si}`, source: textId, sourceHandle: "out", target: genId, targetHandle: "prompt", animated: true });
+      const face = (bible.cast ?? []).find((c) => c.imageAssetId && (shot.visual.includes(c.name) || shot.line.includes(c.name) || shot.imagePrompt.includes(c.name)))
+        ?? (bible.cast ?? []).find((c) => c.imageAssetId);
+      if (face?.imageAssetId && talking) {
+        const aid = `a_${ei}_${si}`;
+        nodes.push({
+          id: aid,
+          type: "assetNode",
+          position: { x: x + 300, y: y + 220 },
+          data: { assetId: face.imageAssetId },
+        });
+        edges.push({ id: `ea_${ei}_${si}`, source: aid, target: genId, targetHandle: "image", animated: true });
+      }
     });
   });
 

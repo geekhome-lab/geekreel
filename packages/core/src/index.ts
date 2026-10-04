@@ -220,6 +220,7 @@ export const jobTypeLabels: Record<string, string> = {
   "analyze.run": "竞品分析",
   "remake.run": "爆款复刻",
   "pipeline.run": "做成片子",
+  "pipeline.episode": "出这一集",
   "style.import": "导入风格",
 };
 

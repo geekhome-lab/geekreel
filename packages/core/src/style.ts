@@ -96,6 +96,12 @@ export interface DramaShot {
   visual: string;
   line: string;
   imagePrompt: string;
+  imageAssetId?: string | null;
+  videoAssetId?: string | null;
+  audioAssetId?: string | null;
+  /** 视频模型按台词出了嘴型；false 表示用了定妆+配音兜底 */
+  lipSynced?: boolean;
+  lipsNote?: string | null;
 }
 
 export interface DramaEpisode {

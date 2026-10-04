@@ -23,6 +23,13 @@ function timelineAbs(projectId: string): string | null {
   return dir ? join(dir, "timeline", "main.json") : null;
 }
 
+function isPortraitProject(projectId: string): boolean {
+  const proj = db.query("SELECT seriesId FROM projects WHERE id = ?").get(projectId) as { seriesId: string | null } | null;
+  if (!proj?.seriesId) return false;
+  const series = db.query("SELECT kind FROM series WHERE id = ?").get(proj.seriesId) as { kind: string } | null;
+  return series?.kind === "drama" || series?.kind === "free";
+}
+
 export const timelineRoutes = new Hono();
 
 timelineRoutes.get("/project/:projectId", (c) => {
@@ -30,7 +37,7 @@ timelineRoutes.get("/project/:projectId", (c) => {
   if (!abs) return err(c, "项目不存在", 404);
   if (!existsSync(abs)) {
     mkdirSync(join(abs, ".."), { recursive: true });
-    writeFileSync(abs, JSON.stringify(emptyTimelineDoc(), null, 2), "utf-8");
+    writeFileSync(abs, JSON.stringify(emptyTimelineDoc({ portrait: isPortraitProject(c.req.param("projectId")) }), null, 2), "utf-8");
   }
   try {
     return ok(c, { doc: JSON.parse(readFileSync(abs, "utf-8")) as TimelineDoc });
@@ -75,14 +82,14 @@ timelineRoutes.post("/project/:projectId/from-canvas", async (c) => {
   };
 
   const genNodes = (canvas.nodes ?? [])
-    .filter((n) => n.type === "imageGenNode" && typeof n.data?.assetId === "string")
+    .filter((n) => (n.type === "imageGenNode" || n.type === "videoGenNode") && typeof n.data?.assetId === "string")
     .sort((a, b) => (a.position?.x ?? 0) - (b.position?.x ?? 0));
   if (genNodes.length === 0) return err(c, "画布上还没有生成好的画面。先在首页或画布点「运行」。", 422);
 
   const edges = canvas.edges ?? [];
   const nodesById = new Map((canvas.nodes ?? []).map((n) => [n.id, n]));
   const shotMs = 3000;
-  const doc = emptyTimelineDoc();
+  const doc = emptyTimelineDoc({ portrait: isPortraitProject(projectId) });
   const vTrack = doc.tracks.find((t) => t.type === "video")!;
   const sTrack = doc.tracks.find((t) => t.type === "subtitle")!;
 

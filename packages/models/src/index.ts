@@ -115,6 +115,9 @@ export interface ModelAdapter {
       durationSec?: number;
       signal?: AbortSignal;
       image?: { mime: string; data: Uint8Array };
+      lastFrame?: { mime: string; data: Uint8Array };
+      dialogue?: string;
+      audio?: boolean;
     },
   ): Promise<VideoGenResult>;
   transcribe?(

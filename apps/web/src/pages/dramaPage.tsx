@@ -276,6 +276,29 @@ export function DramaPage() {
           >
             {busy ? "按档案拆集…" : "满意，往下走"}
           </button>
+          {pipe?.projectId && (bible?.episodes?.length ?? 0) > 0 ? (
+            <button
+              className="rounded-xl border border-line px-4 py-2 text-sm text-fg-dim disabled:opacity-40"
+              disabled={busy}
+              onClick={async () => {
+                if (!pipe.projectId) return;
+                setBusy(true);
+                setError("");
+                try {
+                  const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId: pipe.projectId });
+                  await waitForJob(job.id, 20 * 60_000);
+                  setCurrentProject(pipe.projectId);
+                  navigate("/timeline");
+                } catch (e) {
+                  setError(e instanceof Error ? e.message : String(e));
+                } finally {
+                  setBusy(false);
+                }
+              }}
+            >
+              {busy ? "正在出集…" : "出这一集"}
+            </button>
+          ) : null}
           <button
             className="rounded-xl border border-line px-4 py-2 text-sm text-fg-dim"
             disabled={busy || !pipe}

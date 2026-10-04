@@ -88,13 +88,17 @@ export const kling: ModelAdapter = {
     const token = klingAuth(config);
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
     const base = config.baseUrl || "https://api.klingai.com";
-    const create = await fetch(joinUrl(base, "/v1/videos/text2video"), {
+    const imageB64 = req.image ? Buffer.from(req.image.data).toString("base64") : "";
+    const path = imageB64 ? "/v1/videos/image2video" : "/v1/videos/text2video";
+    const create = await fetch(joinUrl(base, path), {
       method: "POST",
       headers,
       body: JSON.stringify({
         model_name: config.model || "kling-v1-6",
         prompt: req.prompt,
         duration: String(req.durationSec || 5),
+        ...(imageB64 ? { image: imageB64 } : {}),
+        ...(req.lastFrame ? { image_tail: Buffer.from(req.lastFrame.data).toString("base64") } : {}),
       }),
       signal: req.signal ?? null,
     });
@@ -105,7 +109,7 @@ export const kling: ModelAdapter = {
 
     for (let i = 0; i < 90; i++) {
       await sleep(5000, req.signal);
-      const poll = await fetch(joinUrl(base, `/v1/videos/text2video/${taskId}`), {
+      const poll = await fetch(joinUrl(base, `${path}/${taskId}`), {
         headers,
         signal: req.signal ?? null,
       });
@@ -166,7 +170,15 @@ export const doubaoSeedance: ModelAdapter = {
       headers,
       body: JSON.stringify({
         model: config.model,
-        content: [{ type: "text", text: req.prompt }],
+        content: [
+          { type: "text", text: req.prompt },
+          ...(req.image
+            ? [{ type: "image_url", image_url: { url: `data:${req.image.mime || "image/png"};base64,${Buffer.from(req.image.data).toString("base64")}` } }]
+            : []),
+          ...(req.lastFrame
+            ? [{ type: "image_url", image_url: { url: `data:${req.lastFrame.mime || "image/png"};base64,${Buffer.from(req.lastFrame.data).toString("base64")}` } }]
+            : []),
+        ],
         duration: req.durationSec || 5,
       }),
       signal: req.signal ?? null,

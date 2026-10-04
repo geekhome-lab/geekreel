@@ -1,8 +1,9 @@
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { DramaBible, Series } from "@vw/core";
+import type { DramaBible, Job, Series } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
+import { waitForJob } from "../lib/runGen";
 import { iconPlus, iconTrash } from "../lib/icons";
 
 type SeriesDetail = Series & { bible: DramaBible | null };
@@ -72,6 +73,7 @@ function SeriesCard(props: {
   onDelete: () => void;
 }) {
   const { series: s } = props;
+  const navigate = useNavigate();
   const { data: detail } = useQuery({
     queryKey: ["series", s.id],
     queryFn: () => api<SeriesDetail>(`/api/series/${s.id}`),
@@ -88,6 +90,9 @@ function SeriesCard(props: {
             <span className="rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-fg-faint">{kindLabel}</span>
             <span className="text-[11px] text-fg-faint">已 {s.episodeCount} 集</span>
           </div>
+          {detail?.bible?.episodes?.some((e) => e.shots.some((sh) => sh.lipsNote)) ? (
+            <p className="mt-2 text-[11px] text-amber-300">有几镜没对上嘴。换会对口型的视频模型，再点「出这一集」。</p>
+          ) : null}
           {cast.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
               {cast.slice(0, 8).map((c) => (
@@ -108,6 +113,23 @@ function SeriesCard(props: {
         <div className="flex flex-wrap gap-1.5">
           <button className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black" onClick={props.onContinue}>
             接到这部，做下一集
+          </button>
+          <button
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim disabled:opacity-40"
+            disabled={!s.lastProjectId}
+            onClick={async () => {
+              if (!s.lastProjectId) return;
+              try {
+                const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId: s.lastProjectId });
+                await waitForJob(job.id, 20 * 60_000);
+                useAppStore.getState().setCurrentProject(s.lastProjectId);
+                navigate("/timeline");
+              } catch (e) {
+                alert(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            出这一集
           </button>
           <button
             className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim disabled:opacity-40"

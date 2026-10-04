@@ -50,6 +50,19 @@ pipelineRoutes.post("/run", async (c) => {
   return ok(c, job);
 });
 
+pipelineRoutes.post("/render-episode", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    projectId?: string;
+    episodeIndex?: number;
+  };
+  if (!body.projectId) return err(c, "先打开一个短剧项目");
+  if (!listEndpoints("image").some((e) => e.enabled) && !listEndpoints("video").some((e) => e.enabled)) {
+    return err(c, "出集至少要有图片或视频模型。到「模型」页加上再来。", 422);
+  }
+  const job = jobQueue.submit("pipeline.episode", body, body.projectId);
+  return ok(c, job);
+});
+
 pipelineRoutes.post("/:id/advance", async (c) => {
   try {
     return ok(c, await advancePipeline(c.req.param("id")));

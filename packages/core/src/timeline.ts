@@ -40,11 +40,11 @@ export interface TimelineDoc {
   tracks: TimelineTrack[];
 }
 
-export function emptyTimelineDoc(): TimelineDoc {
+export function emptyTimelineDoc(opts?: { portrait?: boolean }): TimelineDoc {
   return {
     version: 1,
-    width: 1280,
-    height: 720,
+    width: opts?.portrait ? 1080 : 1280,
+    height: opts?.portrait ? 1920 : 720,
     tracks: [
       { id: "v1", type: "video", name: "视频", clips: [] },
       { id: "a1", type: "audio", name: "音频 1", clips: [] },

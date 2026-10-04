@@ -76,6 +76,8 @@ genRoutes.post("/video", async (c) => {
     endpointId?: string;
     projectId?: string;
     imageAssetId?: string;
+    lastFrameAssetId?: string;
+    dialogue?: string;
   };
   if (!body.prompt?.trim()) return err(c, "缺少提示词");
   if (!listEndpoints("video").some((e) => e.enabled)) {
@@ -88,6 +90,8 @@ genRoutes.post("/video", async (c) => {
       durationSec: body.durationSec,
       endpointId: body.endpointId,
       imageAssetId: body.imageAssetId,
+      lastFrameAssetId: body.lastFrameAssetId,
+      dialogue: body.dialogue,
     },
     body.projectId ?? null,
   );

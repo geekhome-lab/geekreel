@@ -186,6 +186,8 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     endpointId?: string;
     projectId?: string;
     imageAssetId?: string;
+    lastFrameAssetId?: string;
+    dialogue?: string;
   };
   if (!payload.prompt?.trim()) throw new Error("缺少提示词");
   ctx.progress(0.05, "找视频模型");
@@ -194,14 +196,17 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.generateVideo) throw new Error("这个模型不会出视频，换一个视频模型");
 
-  let image: { mime: string; data: Uint8Array } | undefined;
-  if (payload.imageAssetId) {
-    const img = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(payload.imageAssetId) as { path: string } | null;
-    if (img) {
-      const bytes = new Uint8Array(readFileSync(absInLibrary(img.path)));
-      image = { mime: "image/png", data: bytes };
-    }
-  }
+  const readImage = (id?: string) => {
+    if (!id) return undefined;
+    const img = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(id) as { path: string } | null;
+    if (!img) return undefined;
+    return { mime: "image/png", data: new Uint8Array(readFileSync(absInLibrary(img.path))) };
+  };
+  const image = readImage(payload.imageAssetId) ?? readImage(payload.lastFrameAssetId);
+  const lastFrame = payload.lastFrameAssetId && payload.lastFrameAssetId !== payload.imageAssetId
+    ? readImage(payload.lastFrameAssetId)
+    : undefined;
+  const dialogue = payload.dialogue?.trim() || undefined;
 
   ctx.progress(0.15, `正在生成 ${endpoint.name}，可能要一两分钟`);
   const result = await adapter.generateVideo(endpoint.config, {
@@ -209,6 +214,9 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     durationSec: payload.durationSec || 5,
     signal: ctx.signal,
     image,
+    lastFrame,
+    dialogue,
+    audio: Boolean(dialogue),
   });
   const ext = result.mime.includes("webm") ? "webm" : "mp4";
   const asset = storeAsset({
@@ -226,7 +234,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     videoSec: result.durationSec ?? payload.durationSec ?? 5,
   });
   ctx.progress(1, "视频已入库");
-  return { assetId: asset.id, endpointId: endpoint.id };
+  return { assetId: asset.id, endpointId: endpoint.id, lipSynced: Boolean(dialogue) && endpoint.adapterType === "openai-compatible" };
 };
 
 export const mediaTranscodeHandler: JobHandler = async (job, ctx) => {

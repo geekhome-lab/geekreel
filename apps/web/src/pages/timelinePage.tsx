@@ -7,6 +7,8 @@ import {
   parseSrt,
   timelineDuration,
   type Asset,
+  type Job,
+  type PipelineRun,
   type TimelineClip,
   type TimelineDoc,
   type TimelineTrack,
@@ -75,6 +77,11 @@ function TimelineEditor({ projectId }: { projectId: string }) {
     queryKey: ["assets"],
     queryFn: () => api<Asset[]>("/api/assets"),
   });
+  const { data: pipes } = useQuery({
+    queryKey: ["pipelines", projectId],
+    queryFn: () => api<PipelineRun[]>(`/api/pipelines?projectId=${encodeURIComponent(projectId)}`),
+  });
+  const lipsNotes = (pipes?.[0]?.bible?.episodes ?? []).flatMap((e) => e.shots).filter((s) => s.lipsNote);
   const assetMap = useMemo(() => new Map((allAssets ?? []).map((a) => [a.id, a])), [allAssets]);
 
   const scheduleSave = useCallback(
@@ -312,8 +319,32 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   return (
     <div className="flex h-full flex-col p-4">
       {/* 工具栏 */}
+      {lipsNotes.length > 0 ? (
+        <p className="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+          {lipsNotes.length} 镜没对上嘴，先用定妆加配音。换一个会对口型的视频模型再点「出这一集」。
+        </p>
+      ) : null}
       <div className="mb-3 flex items-center gap-2">
         <h1 className="mr-2 text-sm font-semibold">时间线</h1>
+        {doc.width < doc.height ? (
+          <span className="rounded-full border border-line px-2 py-0.5 text-[10px] text-fg-faint">竖屏 {doc.width}×{doc.height}</span>
+        ) : null}
+        <ToolBtn
+          onClick={async () => {
+            try {
+              const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId });
+              await waitForJob(job.id, 20 * 60_000);
+              const r = await api<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}`);
+              setDoc(r.doc);
+              queryClient.invalidateQueries({ queryKey: ["assets"] });
+              queryClient.invalidateQueries({ queryKey: ["pipelines", projectId] });
+            } catch (e) {
+              alert(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        >
+          出这一集
+        </ToolBtn>
         <ToolBtn onClick={fromCanvas} disabled={assembling}>
           {assembling ? "装配中…" : "从画布装上"}
         </ToolBtn>

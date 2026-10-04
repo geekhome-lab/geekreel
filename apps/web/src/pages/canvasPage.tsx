@@ -16,7 +16,7 @@ import {
   type NodeChange,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { Asset, PipelineRun } from "@vw/core";
+import type { Asset, Job, PipelineRun } from "@vw/core";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, apiJson } from "../lib/api";
 import { useAppStore } from "../lib/store";
@@ -304,6 +304,7 @@ function CanvasInner(props: { projectId: string }) {
                 endpointId: data.endpointId,
                 projectId: props.projectId,
                 imageAssetId: incomingImage || undefined,
+                dialogue: /「([^」]+)」/.exec(prompt)?.[1],
               });
             } else if (node.type === "ttsNode") {
               const data = node.data as TtsNodeData;
@@ -461,6 +462,20 @@ function CanvasInner(props: { projectId: string }) {
           <span className="px-1 text-[10px] text-fg-faint">
             {saveState === "saved" ? "已保存" : saveState === "saving" ? "保存中…" : "待保存"}
           </span>
+          <button
+            className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-dim hover:text-fg"
+            onClick={async () => {
+              try {
+                const job = await apiJson<Job>("/api/pipelines/render-episode", "post", { projectId: props.projectId });
+                await waitForJob(job.id, 20 * 60_000);
+                navigate("/timeline");
+              } catch (e) {
+                alert(e instanceof Error ? e.message : String(e));
+              }
+            }}
+          >
+            出这一集
+          </button>
           <button
             className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-black hover:brightness-110"
             onClick={async () => {

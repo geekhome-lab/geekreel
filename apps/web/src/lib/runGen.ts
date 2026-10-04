@@ -92,6 +92,8 @@ export async function submitVideoGen(input: {
   endpointId?: string | null;
   projectId?: string | null;
   imageAssetId?: string | null;
+  lastFrameAssetId?: string | null;
+  dialogue?: string | null;
 }): Promise<Job> {
   return api<Job>("/api/gen/video", {
     method: "POST",
