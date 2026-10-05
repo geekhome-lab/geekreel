@@ -1,4 +1,13 @@
-import { fetchChannelPrices, hasAnyPrice, missingUnitPrice, type Capability, type ModelEndpoint, type PriceQuote } from "@vw/models";
+import {
+  fetchChannelPrices,
+  hasAnyPrice,
+  isLocalBaseUrl,
+  localZeroPrices,
+  missingUnitPrice,
+  type Capability,
+  type ModelEndpoint,
+  type PriceQuote,
+} from "@vw/models";
 import { recomputeUsageCosts } from "./usage";
 import { db } from "../db";
 import { decrypt, encrypt, isPlaceholderSecret, maskSecret } from "../lib/crypto";
@@ -71,6 +80,12 @@ export function createEndpoint(input: {
 }): ModelEndpoint {
   const id = newId();
   const config = { ...input.config };
+  if (isLocalBaseUrl(config.baseUrl ?? "") || input.adapterType === "comfyui") {
+    const zeros = localZeroPrices(input.capability);
+    for (const [k, v] of Object.entries(zeros)) {
+      if (!config[k]?.trim()) config[k] = v;
+    }
+  }
   if (config.apiKey) {
     config.apiKeyEnc = encrypt(config.apiKey);
     delete config.apiKey;
@@ -189,6 +204,11 @@ export async function importFromEnv(): Promise<{ created: string[]; skipped: str
 export async function attachChannelPrices(
   id: string,
 ): Promise<{ ok: true; quote: PriceQuote } | { ok: false; reason: string }> {
+  const ep = getEndpoint(id, true);
+  if (!ep) return { ok: false, reason: "端点不存在" };
+  if (isLocalBaseUrl(ep.config.baseUrl ?? "") || ep.adapterType === "comfyui") {
+    return { ok: true, quote: { source: "local", model: ep.config.model ?? "" } };
+  }
   try {
     const { quote } = await applyChannelPrices(id);
     return { ok: true, quote };

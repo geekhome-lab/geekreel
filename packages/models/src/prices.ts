@@ -1,3 +1,5 @@
+import { isLocalBaseUrl } from "./local";
+
 export interface ChannelPrices {
   priceInput?: string;
   priceOutput?: string;
@@ -133,6 +135,7 @@ export function hasAnyPrice(p: ChannelPrices): boolean {
 
 export function missingUnitPrice(ep: { capability: string; config: Record<string, string> }): boolean {
   const c = ep.config;
+  if (isLocalBaseUrl(c.baseUrl ?? "")) return false;
   if (ep.capability === "llm") return !c.priceInput && !c.priceOutput;
   if (ep.capability === "image") return !c.priceImage;
   if (ep.capability === "video") return !c.priceVideo;

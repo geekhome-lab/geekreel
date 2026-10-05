@@ -1,4 +1,5 @@
 import { dashscopeOrigin, isDashScope } from "./dashscopeImage";
+import { isLocalBaseUrl } from "./local";
 import {
   hasAnyPrice,
   pickDashScopeModel,
@@ -65,6 +66,7 @@ export async function fetchChannelPrices(config: Record<string, string>): Promis
   const baseUrl = (config.baseUrl ?? "").trim();
   const model = (config.model ?? "").trim();
   const apiKey = (config.apiKey ?? "").trim();
+  if (isLocalBaseUrl(baseUrl)) throw new Error("本机模型没有渠道报价");
   if (!model) throw new Error("先填模型名");
   if (!apiKey) throw new Error("先填密钥");
   if (isDashScope(baseUrl)) return fetchDashScopePrices(baseUrl, apiKey, model);

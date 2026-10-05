@@ -25,3 +25,19 @@ test("常用预设覆盖文本图片视频配音", () => {
   expect(modelPresets.some((p) => p.capability === "video" && p.id === "qwen-video")).toBe(true);
   expect(modelPresets.some((p) => p.capability === "tts" && p.id === "qwen-tts")).toBe(true);
 });
+
+test("本机 Ollama 和 ComfyUI 是可选项，不要密钥也能加", () => {
+  const ollama = modelPresets.find((p) => p.id === "ollama-llm")!;
+  const comfy = modelPresets.find((p) => p.id === "comfyui-image")!;
+  expect(ollama.local).toBe(true);
+  expect(ollama.secretKeys).toEqual([]);
+  expect(comfy.adapterType).toBe("comfyui");
+  expect(comfy.secretKeys).toEqual([]);
+  expect(
+    matchPreset(ollama, {
+      capability: "llm",
+      adapterType: "openai-compatible",
+      config: { baseUrl: "http://127.0.0.1:11434/v1", model: "llama3.1" },
+    }),
+  ).toBe(true);
+});

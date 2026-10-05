@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   capabilityLabels,
+  isLocalBaseUrl,
   matchPreset,
   missingUnitPrice,
   modelPresets,
@@ -58,6 +59,7 @@ export function ModelsPage() {
   const [testResults, setTestResults] = useState<Record<string, TestResult>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({
     presets: true,
+    local: true,
     usage: true,
   });
   const [priceMsg, setPriceMsg] = useState("");
@@ -126,7 +128,14 @@ export function ModelsPage() {
   const presetsByCap = useMemo(() => {
     const map = new Map<Capability, ModelPreset[]>();
     for (const cap of capabilities) map.set(cap, []);
-    for (const p of modelPresets) map.get(p.capability)?.push(p);
+    for (const p of modelPresets.filter((x) => !x.local)) map.get(p.capability)?.push(p);
+    return map;
+  }, []);
+
+  const localByCap = useMemo(() => {
+    const map = new Map<Capability, ModelPreset[]>();
+    for (const cap of capabilities) map.set(cap, []);
+    for (const p of modelPresets.filter((x) => x.local)) map.get(p.capability)?.push(p);
     return map;
   }, []);
 
@@ -139,7 +148,9 @@ export function ModelsPage() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">模型</h1>
-          <p className="mt-0.5 text-xs text-fg-faint">主流文本、图片、视频、配音都列在下面，点一下填密钥。其余用右上角自定义。</p>
+          <p className="mt-0.5 text-xs text-fg-faint">
+            云端点一下填密钥。本机 Ollama、LM Studio、ComfyUI 是可选项，填地址就能接。
+          </p>
         </div>
         <div className="flex gap-2">
           <button
@@ -199,6 +210,47 @@ export function ModelsPage() {
           )}
         </Fold>
       )}
+
+      <Fold
+        title="本机"
+        open={isOpen("local", true)}
+        onToggle={() => toggle("local", true)}
+        extra="可选项，不填密钥"
+      >
+        <p className="mb-3 text-[11px] text-fg-faint">
+          Ollama / LM Studio 走 OpenAI 兼容接口。ComfyUI 出图可只填 checkpoint；出视频请贴 API Format 工作流。
+        </p>
+        <div className="space-y-4">
+          {capabilities.map((cap) => {
+            const list = localByCap.get(cap) ?? [];
+            if (list.length === 0) return null;
+            return (
+              <div key={cap}>
+                <h3 className="mb-2 text-[11px] text-fg-faint">{capabilityLabels[cap]}</h3>
+                <div className="flex flex-wrap gap-2">
+                  {list.map((preset) => {
+                    const existing = (endpoints ?? []).find((ep) => matchPreset(preset, ep));
+                    return (
+                      <button
+                        key={preset.id}
+                        className={`rounded-full border px-3 py-1.5 text-xs ${
+                          existing
+                            ? "border-accent/40 bg-accent/10 text-accent"
+                            : "border-line text-fg-dim hover:border-accent-dim hover:text-fg"
+                        }`}
+                        onClick={() => (existing ? setEditing(existing) : setAdding(preset))}
+                      >
+                        {preset.name}
+                        {existing ? " · 已加" : ""}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Fold>
 
       <Fold
         title="常用模型"
@@ -273,6 +325,9 @@ export function ModelsPage() {
                           )}
                           {ep.vision && (
                             <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-400">看图</span>
+                          )}
+                          {(ep.adapterType === "comfyui" || isLocalBaseUrl(ep.config.baseUrl ?? "")) && (
+                            <span className="rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-400">本机</span>
                           )}
                           <span className="text-[11px] text-fg-faint">{ep.config.model}</span>
                           {missingUnitPrice(ep) && (
@@ -405,12 +460,115 @@ function Fold(props: {
   );
 }
 
+function fieldControl(
+  f: { key: string; type?: string; placeholder?: string },
+  value: string,
+  onChange: (v: string) => void,
+) {
+  const cls = "w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent-dim";
+  if (f.type === "textarea" || f.key === "workflow") {
+    return (
+      <textarea
+        rows={8}
+        className={`${cls} min-h-[140px] resize-y`}
+        placeholder={f.placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    );
+  }
+  return (
+    <input
+      type={f.type === "password" ? "password" : "text"}
+      className={cls}
+      placeholder={f.placeholder}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
+
+function ProbeModels(props: {
+  adapterType: string;
+  config: Record<string, string>;
+  onPick: (id: string) => void;
+}) {
+  const [models, setModels] = useState<string[]>([]);
+  const [error, setError] = useState("");
+  const probe = useMutation({
+    mutationFn: () =>
+      apiJson<{ models: string[] }>("/api/models/probe", "post", {
+        adapterType: props.adapterType,
+        config: props.config,
+      }),
+    onSuccess: (r) => {
+      setModels(r.models);
+      setError("");
+    },
+    onError: (e) => {
+      setModels([]);
+      setError(e instanceof Error ? e.message : String(e));
+    },
+  });
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent disabled:opacity-40"
+        disabled={probe.isPending || !props.config.baseUrl?.trim()}
+        onClick={() => probe.mutate()}
+      >
+        {probe.isPending ? "探测中…" : "探测本机模型"}
+      </button>
+      {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
+      {models.length > 0 ? (
+        <select
+          className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none"
+          value=""
+          onChange={(e) => {
+            if (e.target.value) props.onPick(e.target.value);
+          }}
+        >
+          <option value="">从 {models.length} 个里选一个</option>
+          {models.map((id) => (
+            <option key={id} value={id}>
+              {id}
+            </option>
+          ))}
+        </select>
+      ) : null}
+    </div>
+  );
+}
+
+const EDIT_FIELDS: Record<string, { label: string; type?: "text" | "textarea"; placeholder?: string }> = {
+  baseUrl: { label: "地址", placeholder: "http://127.0.0.1:11434/v1" },
+  model: { label: "模型名", placeholder: "点探测从本机列表选" },
+  workflow: {
+    label: "工作流 JSON（API Format）",
+    type: "textarea",
+    placeholder: "出图可不贴。出视频请从 ComfyUI 菜单 Save (API Format) 贴进来。可用 {{prompt}}。",
+  },
+};
+
 function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSaved: (data: SavedEndpoint) => void }) {
   const p = props.preset;
   const [secrets, setSecrets] = useState<Record<string, string>>(() =>
     Object.fromEntries(p.secretKeys.map((k) => [k, ""])),
   );
+  const [extra, setExtra] = useState<Record<string, string>>(() => ({ ...p.config }));
+  const [optionalKey, setOptionalKey] = useState("");
   const [error, setError] = useState("");
+
+  const needModel = p.adapterType !== "comfyui";
+  const needWorkflow = p.id === "comfyui-video";
+  const readySecrets = p.secretKeys.every((k) => Boolean(secrets[k]?.trim()));
+  const readyLocal =
+    Boolean(extra.baseUrl?.trim()) &&
+    (!needModel || Boolean(extra.model?.trim())) &&
+    (!needWorkflow || Boolean(extra.workflow?.trim())) &&
+    (p.id !== "comfyui-image" || Boolean(extra.model?.trim() || extra.workflow?.trim()));
+  const canSave = readySecrets && (p.local ? readyLocal : true);
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -419,11 +577,16 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
           throw new Error(`先填${p.secretLabels?.[key] ?? (key === "apiKey" ? "API Key" : key)}`);
         }
       }
+      if (p.local && !extra.baseUrl?.trim()) throw new Error("先填本机地址");
+      if (needModel && !extra.model?.trim()) throw new Error("先填模型名，或点探测从列表选");
+      if (needWorkflow && !extra.workflow?.trim()) throw new Error("出视频请贴 ComfyUI 的 API Format 工作流");
+      const config = { ...p.config, ...extra, ...secrets };
+      if (p.local && optionalKey.trim()) config.apiKey = optionalKey.trim();
       return apiJson<SavedEndpoint>("/api/models/endpoints", "post", {
         name: p.name,
         adapterType: p.adapterType,
         capability: p.capability,
-        config: { ...p.config, ...secrets },
+        config,
         webSearch: p.webSearch ?? false,
         vision: p.vision ?? false,
       });
@@ -433,10 +596,51 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
   });
 
   return (
-    <Modal title={`添加 ${p.name}`} onClose={props.onClose} width="w-[440px]">
+    <Modal title={`添加 ${p.name}`} onClose={props.onClose} width={p.local ? "w-[560px]" : "w-[440px]"}>
       <div className="space-y-4">
         <p className="text-xs text-fg-dim">{p.hint}</p>
-        <p className="text-[11px] text-fg-faint">加上后会向渠道要报价。拉不到会让你手填，不然近 30 天花费是 0。</p>
+        {p.local ? (
+          <p className="text-[11px] text-fg-faint">这是可选项。本机没开服务也能先不加，开了再来填地址。</p>
+        ) : (
+          <p className="text-[11px] text-fg-faint">加上后会向渠道要报价。拉不到会让你手填，不然近 30 天花费是 0。</p>
+        )}
+        {(p.editKeys ?? []).map((key) => {
+          const meta = EDIT_FIELDS[key] ?? { label: key };
+          return (
+            <div key={key}>
+              <label className="mb-1.5 block text-xs text-fg-dim">
+                {meta.label}
+                {(key === "baseUrl" || (needModel && key === "model") || (needWorkflow && key === "workflow")) && (
+                  <span className="text-red-400"> *</span>
+                )}
+              </label>
+              {fieldControl(
+                { key, type: meta.type, placeholder: meta.placeholder },
+                extra[key] ?? "",
+                (v) => setExtra((m) => ({ ...m, [key]: v })),
+              )}
+            </div>
+          );
+        })}
+        {p.local ? (
+          <ProbeModels
+            adapterType={p.adapterType}
+            config={{ ...extra, ...secrets, ...(optionalKey.trim() ? { apiKey: optionalKey.trim() } : {}) }}
+            onPick={(id) => setExtra((m) => ({ ...m, model: id }))}
+          />
+        ) : null}
+        {p.local && p.adapterType === "openai-compatible" ? (
+          <div>
+            <label className="mb-1.5 block text-xs text-fg-dim">API Key（没有就空着）</label>
+            <input
+              type="password"
+              className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent-dim"
+              placeholder="Ollama / LM Studio 通常不需要"
+              value={optionalKey}
+              onChange={(e) => setOptionalKey(e.target.value)}
+            />
+          </div>
+        ) : null}
         {p.secretKeys.map((key) => (
           <div key={key}>
             <label className="mb-1.5 block text-xs text-fg-dim">
@@ -460,10 +664,10 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
           </button>
           <button
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black hover:brightness-110 disabled:opacity-40"
-            disabled={saveMutation.isPending || p.secretKeys.some((k) => !secrets[k]?.trim())}
+            disabled={saveMutation.isPending || !canSave}
             onClick={() => saveMutation.mutate()}
           >
-            {saveMutation.isPending ? "加上并拉报价…" : "加上"}
+            {saveMutation.isPending ? (p.local ? "加上…" : "加上并拉报价…") : "加上"}
           </button>
         </div>
       </div>
@@ -503,7 +707,15 @@ function EndpointModal(props: {
   );
 
   const adapter = props.adapters.find((a) => a.type === adapterType);
-  const allowedCaps = adapter?.capabilities ?? capabilities;
+  const adaptersForCap = props.adapters.filter((a) => a.capabilities.includes(capability));
+  const localish = adapterType === "comfyui" || isLocalBaseUrl(config.baseUrl ?? "");
+
+  useEffect(() => {
+    if (ep) return;
+    if (!adaptersForCap.some((a) => a.type === adapterType)) {
+      setAdapterType(adaptersForCap[0]?.type ?? "");
+    }
+  }, [capability]);
 
   useEffect(() => {
     if (!ep || !missingUnitPrice(ep)) return;
@@ -579,9 +791,7 @@ function EndpointModal(props: {
                 value={capability}
                 onChange={(e) => setCapability(e.target.value as Capability)}
               >
-                {capabilities
-                  .filter((c) => allowedCaps.includes(c))
-                  .map((c) => (
+                {capabilities.map((c) => (
                     <option key={c} value={c}>
                       {capabilityLabels[c]}
                     </option>
@@ -595,7 +805,7 @@ function EndpointModal(props: {
                 value={adapterType}
                 onChange={(e) => setAdapterType(e.target.value)}
               >
-                {props.adapters.map((a) => (
+                {adaptersForCap.map((a) => (
                   <option key={a.type} value={a.type}>
                     {a.label}
                   </option>
@@ -611,18 +821,20 @@ function EndpointModal(props: {
               {f.label}
               {f.required && <span className="text-red-400"> *</span>}
             </label>
-            <input
-              type={f.type === "password" ? "password" : "text"}
-              className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none focus:border-accent-dim"
-              placeholder={f.placeholder}
-              value={config[f.key] ?? ""}
-              onChange={(e) => setConfig((m) => ({ ...m, [f.key]: e.target.value }))}
-            />
+            {fieldControl(f, config[f.key] ?? "", (v) => setConfig((m) => ({ ...m, [f.key]: v })))}
             {ep && (f.key === "apiKey" || f.key === "secretKey" || f.type === "password") && (
               <p className="mt-1 text-[10px] text-fg-faint">已保存过。留空继续用原来的，不要把打码贴回去。</p>
             )}
           </div>
         ))}
+
+        {(adapterType === "openai-compatible" || adapterType === "comfyui") && (
+          <ProbeModels
+            adapterType={adapterType}
+            config={config}
+            onPick={(id) => setConfig((m) => ({ ...m, model: id }))}
+          />
+        )}
 
         {capability === "llm" && (
           <div className="space-y-2">
@@ -680,7 +892,9 @@ function EndpointModal(props: {
             <PriceField label="单价（元/秒）" value={config.priceVideo ?? ""} onChange={(v) => setConfig((m) => ({ ...m, priceVideo: v }))} />
           )}
           <p className="col-span-2 text-[11px] text-fg-faint">
-            保存时会向渠道要报价。百炼、OpenRouter 能拉到就直接写上，拉不到请手填。
+            {localish
+              ? "本机模型没有渠道报价，花费记 0。要记账可以自己填单价。"
+              : "保存时会向渠道要报价。百炼、OpenRouter 能拉到就直接写上，拉不到请手填。"}
           </p>
         </div>
 

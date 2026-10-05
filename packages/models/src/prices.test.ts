@@ -74,6 +74,7 @@ test("没填对应能力的单价算缺价", () => {
   expect(missingUnitPrice({ capability: "llm", config: {} })).toBe(true);
   expect(missingUnitPrice({ capability: "llm", config: { priceInput: "0.002" } })).toBe(false);
   expect(missingUnitPrice({ capability: "image", config: { priceImage: "0.1" } })).toBe(false);
+  expect(missingUnitPrice({ capability: "llm", config: { baseUrl: "http://127.0.0.1:11434/v1" } })).toBe(false);
 });
 
 test("OpenRouter 美元按 7.2 折人民币", () => {

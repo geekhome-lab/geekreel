@@ -9,6 +9,7 @@ import { dashscopeGenerateSpeech, isDashScopeTts } from "./dashscopeTts";
 import { dashscopeGenerateVideo } from "./dashscopeVideo";
 export { wanVideoChunks, snapWanDuration, wanDurationCap } from "./dashscopeVideo";
 import { openaiGenerateVideo } from "./openaiVideo";
+import { originRoot } from "./local";
 
 export type Capability = "llm" | "image" | "video" | "tts";
 
@@ -22,7 +23,7 @@ export const capabilityLabels: Record<Capability, string> = {
 export interface FieldSpec {
   key: string;
   label: string;
-  type: "text" | "password" | "select" | "number" | "checkbox";
+  type: "text" | "password" | "select" | "number" | "checkbox" | "textarea";
   required?: boolean;
   placeholder?: string;
   options?: Array<{ value: string; label: string }>;
@@ -95,6 +96,7 @@ export interface ModelAdapter {
   capabilities: Capability[];
   configFields: FieldSpec[];
   test(config: Record<string, string>): Promise<TestResult>;
+  listModels?(config: Record<string, string>): Promise<string[]>;
   chat?(
     config: Record<string, string>,
     req: {
@@ -183,11 +185,12 @@ async function openaiFetch(
   path: string,
   init?: RequestInit,
 ): Promise<Response> {
+  const key = (config.apiKey ?? "").trim();
   const res = await fetch(joinUrl(config.baseUrl ?? "", path), {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${config.apiKey ?? ""}`,
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
       ...init?.headers,
     },
   });
@@ -208,21 +211,44 @@ export const openaiCompatible: ModelAdapter = {
   label: "OpenAI 兼容接口",
   capabilities: ["llm", "image", "tts", "video"],
   configFields: [
-    { key: "baseUrl", label: "Base URL", type: "text", required: true, placeholder: "https://api.deepseek.com/v1" },
-    { key: "apiKey", label: "API Key", type: "password", required: true, placeholder: "sk-…" },
-    { key: "model", label: "模型名", type: "text", required: true, placeholder: "deepseek-chat / gpt-image-1 / tts-1 / whisper-1" },
+    { key: "baseUrl", label: "Base URL", type: "text", required: true, placeholder: "https://api.deepseek.com/v1 或 http://127.0.0.1:11434/v1" },
+    { key: "apiKey", label: "API Key", type: "password", placeholder: "本机 Ollama / LM Studio 没有就空着" },
+    { key: "model", label: "模型名", type: "text", required: true, placeholder: "deepseek-chat / llama3.1 / gpt-image-1" },
   ],
 
   async test(config) {
     const start = Date.now();
     try {
-      const res = await openaiFetch(config, "/models");
+      const res = await openaiFetch(config, "/models", { signal: AbortSignal.timeout(6000) });
       const latencyMs = Date.now() - start;
       if (!res.ok) return { ok: false, latencyMs, message: await readError(res) };
       return { ok: true, latencyMs, message: "连接成功" };
     } catch (e) {
-      return { ok: false, latencyMs: Date.now() - start, message: e instanceof Error ? e.message : String(e) };
+      const msg = e instanceof Error ? e.message : String(e);
+      const hint = /fetch failed|ECONNREFUSED|Failed to fetch|Unable to connect/i.test(msg)
+        ? "连不上这个地址。本机模型要先把 Ollama / LM Studio / vLLM 开起来。"
+        : msg;
+      return { ok: false, latencyMs: Date.now() - start, message: hint };
     }
+  },
+
+  async listModels(config) {
+    const fromOpenAi = async () => {
+      const res = await openaiFetch(config, "/models", { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) throw new Error(await readError(res));
+      const json = (await res.json()) as { data?: Array<{ id?: string }> };
+      return (json.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id));
+    };
+    try {
+      const ids = await fromOpenAi();
+      if (ids.length) return ids;
+    } catch {
+      /* Ollama 原生 /api/tags 再试一次 */
+    }
+    const tags = await fetch(`${originRoot(config.baseUrl ?? "")}/api/tags`, { signal: AbortSignal.timeout(8000) });
+    if (!tags.ok) throw new Error(await readError(tags));
+    const json = (await tags.json()) as { models?: Array<{ name?: string; model?: string }> };
+    return (json.models ?? []).map((m) => m.name || m.model).filter((id): id is string => Boolean(id));
   },
 
   async chat(config, req) {
@@ -334,9 +360,10 @@ export const openaiCompatible: ModelAdapter = {
     form.append("model", config.model || "whisper-1");
     form.append("response_format", "verbose_json");
     form.append("timestamp_granularities[]", "word");
+    const key = (config.apiKey ?? "").trim();
     const res = await fetch(joinUrl(config.baseUrl ?? "", "/audio/transcriptions"), {
       method: "POST",
-      headers: { Authorization: `Bearer ${config.apiKey ?? ""}` },
+      headers: key ? { Authorization: `Bearer ${key}` } : undefined,
       body: form,
       signal: req.signal ?? null,
     });
@@ -394,3 +421,4 @@ export * from "./voices";
 export { fetchChannelPrices, channelPriceHint } from "./fetchPrices";
 export type { ChannelPrices, PriceQuote } from "./prices";
 export { hasAnyPrice, missingUnitPrice } from "./prices";
+export { isLocalBaseUrl, localZeroPrices } from "./local";

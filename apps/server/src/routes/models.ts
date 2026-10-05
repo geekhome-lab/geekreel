@@ -48,6 +48,25 @@ modelsRoutes.get("/endpoints", (c) => {
 
 modelsRoutes.post("/import-env", async (c) => ok(c, await importFromEnv()));
 
+/** 探测本机已装模型（Ollama / LM Studio / ComfyUI checkpoint） */
+modelsRoutes.post("/probe", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    adapterType?: string;
+    config?: Record<string, string>;
+  };
+  const adapter = body.adapterType ? getAdapter(body.adapterType) : null;
+  if (!adapter) return err(c, "未知适配器");
+  if (!adapter.listModels) return err(c, `「${adapter.label}」不会列模型，模型名请手填`);
+  try {
+    const models = await adapter.listModels(body.config ?? {});
+    if (!models.length) return err(c, "这个地址上还没有模型。Ollama 先 pull，LM Studio 先加载，ComfyUI 看 models 文件夹。");
+    return ok(c, { models });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return err(c, /fetch failed|ECONNREFUSED|Unable to connect/i.test(msg) ? "连不上这个地址。先把本机服务开起来。" : msg);
+  }
+});
+
 modelsRoutes.post("/endpoints", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as {
     name?: string;

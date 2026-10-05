@@ -10,6 +10,10 @@ export interface ModelPreset {
   config: Record<string, string>;
   secretKeys: string[];
   secretLabels?: Record<string, string>;
+  /** 用户加上时可以改的字段（本机地址、模型名、工作流） */
+  editKeys?: string[];
+  /** 本机 / 局域网，不向云渠道要报价 */
+  local?: boolean;
   webSearch?: boolean;
   vision?: boolean;
 }
@@ -264,6 +268,64 @@ export const modelPresets: ModelPreset[] = [
     adapterType: "openai-compatible",
     config: { baseUrl: "https://ark.cn-beijing.volces.com/api/v3", model: "doubao-tts" },
     secretKeys: ["apiKey"],
+  },
+  {
+    id: "ollama-llm",
+    name: "Ollama",
+    hint: "本机先跑 ollama serve。地址默认 11434。点探测能拉出已拉好的模型。",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "http://127.0.0.1:11434/v1", model: "llama3.1" },
+    secretKeys: [],
+    editKeys: ["baseUrl", "model"],
+    local: true,
+    vision: true,
+  },
+  {
+    id: "lmstudio-llm",
+    name: "LM Studio",
+    hint: "LM Studio 打开本地服务（默认 1234）。先加载一个模型，再点探测。",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "http://127.0.0.1:1234/v1", model: "" },
+    secretKeys: [],
+    editKeys: ["baseUrl", "model"],
+    local: true,
+    vision: true,
+  },
+  {
+    id: "local-openai",
+    name: "本地 OpenAI 兼容",
+    hint: "vLLM、llama.cpp、LocalAI、OneAPI 本机端口都行。Base URL 填到 /v1。",
+    capability: "llm",
+    adapterType: "openai-compatible",
+    config: { baseUrl: "http://127.0.0.1:8080/v1", model: "" },
+    secretKeys: [],
+    editKeys: ["baseUrl", "model"],
+    local: true,
+    vision: true,
+  },
+  {
+    id: "comfyui-image",
+    name: "ComfyUI 出图",
+    hint: "本机打开 ComfyUI（默认 8188）。可直接填 checkpoint，或贴 Save (API Format) 工作流。",
+    capability: "image",
+    adapterType: "comfyui",
+    config: { baseUrl: "http://127.0.0.1:8188", model: "" },
+    secretKeys: [],
+    editKeys: ["baseUrl", "model", "workflow"],
+    local: true,
+  },
+  {
+    id: "comfyui-video",
+    name: "ComfyUI 出视频",
+    hint: "先在 ComfyUI 里把视频工作流 Save (API Format) 贴进来。提示词会写进正向 CLIP，或替换 {{prompt}}。",
+    capability: "video",
+    adapterType: "comfyui",
+    config: { baseUrl: "http://127.0.0.1:8188", model: "" },
+    secretKeys: [],
+    editKeys: ["baseUrl", "model", "workflow"],
+    local: true,
   },
 ];
 
