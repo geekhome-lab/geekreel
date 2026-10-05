@@ -1,32 +1,18 @@
-<h1 align="center">GeekReel AI Studio</h1>
+# GeekReel AI Studio
 
-<p align="center">
-  <b>本地优先的一站式 AI 视频工作台</b><br>
-  A local-first studio that takes a topic from idea to an exported MP4.
-</p>
+**本地优先的一站式 AI 视频工作台**  
 
-<p align="center">
-  找选题 · 拆剧本 · 定妆出片 · 字幕配音 · 时间线导出<br>
-  Radar · Script · Looks · Timeline · Burn-in captions · Bring-your-own models
-</p>
+热点雷达，抖音、知乎、微博等主流平台热点内容直接点击生成相关视频；分集制作、流水线一站式视频生成。
 
-<p align="center">
-  <a href="#geekreel-ai-studio"><b>中文</b></a>
-  ·
-  <a href="#english"><b>English</b></a>
-  ·
-  <a href="docs/design.md">设计文档 / Design</a>
-  ·
-  <a href="LICENSE">许可 / License</a>
-</p>
+不夹带任何私货，没有账号，没有云端成片库，项目、素材、密钥都在本机。
+
+**[中文](#geekreel-ai-studio)** · **[English](#english)** · [设计文档 / Design](docs/design.md) · [许可 / License](LICENSE)
 
 ---
 
 <p align="center">
-  <img src="docs/screenshots/geekreel-keys.png" alt="定妆与手绘白板成片预览 / Look confirmation and whiteboard stills">
+  <img src="docs/screenshots/geekreel-hero.png" alt="GeekReel AI Studio">
 </p>
-
-# GeekReel AI Studio
 
 GeekReel AI Studio 跑在你自己的机器上。没有账号，没有云端成片库。项目、素材、密钥都在本机；生成任务走你自己配置的模型端点。
 
@@ -38,15 +24,15 @@ GeekReel AI Studio 跑在你自己的机器上。没有账号，没有云端成�
 
 ## 为什么值得看
 
-| 亮点 | 实际做法 |
-| --- | --- |
-| **本地优先** | 无登录。SQLite 在 `~/.video-workbench`，素材在你选的文件夹（默认 `~/VideoWorkbench`）。换机器拷仓库即可跑。 |
-| **模型自己配** | 文本 / 图片 / 视频 / 语音都是「适配器 × 端点」。点一下填密钥就能加上通义、DeepSeek、GPT、可灵、豆包、MiniMax 等；也支持自定义 OpenAI 兼容地址。 |
-| **风格是目录，不是写死的皮肤** | 内置「上美影风」和「手绘白板」。第三套 = 往 `stylePacks/` 丢一个包，或贴 GitHub 技能链接 / 上传 `SKILL.md` / zip。做好的包可以带走。 |
-| **首页像对话，不是空白工程** | 「想做什么视频？」→ 选风格 → 出剧本 → 定妆 → 出片。没做完的作品会停在任务中心，点回去接着做。 |
-| **配音不擅自铺** | 出片后字幕可以自动装上。配音要在时间线里选音色、试听，再铺。通义 / OpenAI / MiniMax / 豆包的目录都会列出来，没接的端点标明「未接入」。 |
-| **成本看得见** | 模型页按近 30 天汇总调用次数、tokens、张数、秒数和花费。单价填错就记 0，不猜。 |
-| **媒体工具随仓库走** | ffmpeg / ffprobe 用项目依赖；yt-dlp 按当前系统下载独立二进制。不要去装 pipx，也不要依赖开发机 PATH。 |
+| 亮点                | 实际做法                                                                                        |
+| ----------------- | ------------------------------------------------------------------------------------------- |
+| **本地优先**          | 无登录。SQLite 在 `~/.video-workbench`，素材在你选的文件夹（默认 `~/VideoWorkbench`）。换机器拷仓库即可跑。               |
+| **模型自己配**         | 文本 / 图片 / 视频 / 语音都是「适配器 × 端点」。点一下填密钥就能加上通义、DeepSeek、GPT、可灵、豆包、MiniMax 等；也支持自定义 OpenAI 兼容地址。 |
+| **风格是目录，不是写死的皮肤** | 内置「上美影风」和「手绘白板」。第三套 = 往 `stylePacks/` 丢一个包，或贴 GitHub 技能链接 / 上传 `SKILL.md` / zip。做好的包可以带走。   |
+| **首页像对话，不是空白工程**  | 「想做什么视频？」→ 选风格 → 出剧本 → 定妆 → 出片。没做完的作品会停在任务中心，点回去接着做。                                        |
+| **配音不擅自铺**        | 出片后字幕可以自动装上。配音要在时间线里选音色、试听，再铺。通义 / OpenAI / MiniMax / 豆包的目录都会列出来，没接的端点标明「未接入」。              |
+| **成本看得见**         | 模型页按近 30 天汇总调用次数、tokens、张数、秒数和花费。单价填错就记 0，不猜。                                               |
+| **媒体工具随仓库走**      | ffmpeg / ffprobe 用项目依赖；yt-dlp 按当前系统下载独立二进制。不要去装 pipx，也不要依赖开发机 PATH。                         |
 
 ## 一张图看清工作流
 
@@ -184,12 +170,12 @@ GeekReel AI Studio 跑在你自己的机器上。没有账号，没有云端成�
 
 预置端点（填密钥即可，也可改 URL / 模型名）：
 
-| 能力 | 预置 |
-| --- | --- |
-| 文本 | DeepSeek、GPT-4o、通义千问、Kimi、智谱 GLM、Agnes、Gemini、豆包、MiniMax、混元 |
-| 图片 | GPT Image、通义万相、Agnes、豆包、Flux、CogView、Gemini |
-| 视频 | 通义万相、可灵、豆包 Seedance、Agnes、Sora、MiniMax 海螺 |
-| 语音 | OpenAI、通义、MiniMax、豆包 |
+| 能力  | 预置                                                          |
+| --- | ----------------------------------------------------------- |
+| 文本  | DeepSeek、GPT-4o、通义千问、Kimi、智谱 GLM、Agnes、Gemini、豆包、MiniMax、混元 |
+| 图片  | GPT Image、通义万相、Agnes、豆包、Flux、CogView、Gemini                 |
+| 视频  | 通义万相、可灵、豆包 Seedance、Agnes、Sora、MiniMax 海螺                   |
+| 语音  | OpenAI、通义、MiniMax、豆包                                        |
 
 适配器包括 OpenAI 兼容、DashScope 原生（图 / 视频 / TTS）、可灵、豆包 Seedance。密钥加密写入本机 SQLite，接口返回脱敏。
 
@@ -205,8 +191,8 @@ cd geekreel
 ./scripts/dev.sh
 ```
 
-- 网页：<http://127.0.0.1:5473>
-- API / WebSocket：<http://127.0.0.1:4780>（开发态由 Vite 代理 `/api` 与 `/ws`）
+- 网页：[http://127.0.0.1:5473](http://127.0.0.1:5473)
+- API / WebSocket：[http://127.0.0.1:4780](http://127.0.0.1:4780)（开发态由 Vite 代理 `/api` 与 `/ws`）
 
 只跑成品（先编网页，再由服务托管静态资源）：
 
@@ -214,17 +200,17 @@ cd geekreel
 ./scripts/start.sh
 ```
 
-浏览器打开 <http://127.0.0.1:4780>。
+浏览器打开 [http://127.0.0.1:4780](http://127.0.0.1:4780)。
 
 第一次打开：到 **模型** 页加上文本、图片、视频（配音可选）端点，再回首页写想法。没有密钥时界面会引导去配置，而不是甩一堆报错栈。
 
 ### 目录
 
-| 路径 | 内容 |
-| --- | --- |
-| `~/.video-workbench/` | SQLite、加密密钥、雷达缓存、风格包索引 |
-| `~/VideoWorkbench/` | 默认资产库（设置里可改，改时可选迁移） |
-| 项目目录 | `project.vw.json`、画布快照、流水线状态、`export/` 成片 |
+| 路径                    | 内容                                        |
+| --------------------- | ----------------------------------------- |
+| `~/.video-workbench/` | SQLite、加密密钥、雷达缓存、风格包索引                    |
+| `~/VideoWorkbench/`   | 默认资产库（设置里可改，改时可选迁移）                       |
+| 项目目录                  | `project.vw.json`、画布快照、流水线状态、`export/` 成片 |
 
 端口可用环境变量覆盖：`VW_HOST`、`VW_PORT`（默认 `127.0.0.1:4780`）。ffmpeg 可用 `VW_FFMPEG` 覆盖自带二进制。
 
@@ -280,7 +266,6 @@ Bun + Hono
 4. **配音不会在出片时自动铺上。** 这是有意的：先看画面和字幕，再选声音。
 5. **风格包改变的是提示词与流水线，不是保证每一帧都像样片。** 观感仍取决于你选的图 / 视频模型。
 6. **默认只监听本机。** 若改 `VW_HOST` 对外网开放，请自行处理访问控制；密钥在本机库里。
-7. **密钥只存在本机。** 仓库不含 API Key；密钥加密写在 `~/.video-workbench`，接口返回时脱敏。不要把 `.env`、`.secret` 或数据库提交上去。
 
 ## 开发
 
@@ -296,7 +281,7 @@ bun test packages/models/src/voices.test.ts
 
 ## 许可
 
-可使用、修改、分发，包括商用。再发布时保留 [LICENSE](LICENSE) 并带上开源地址：<https://github.com/geekhome-lab/geekreel>。软件按现状提供，作者不承担担保责任。
+可使用、修改、分发，包括商用。再发布时保留 [LICENSE](LICENSE) 并带上开源地址：[https://github.com/geekhome-lab/geekreel](https://github.com/geekhome-lab/geekreel)。软件按现状提供，作者不承担担保责任。
 
 ---
 
@@ -312,15 +297,15 @@ Version `0.1.0`. Architecture notes live in [`docs/design.md`](docs/design.md) (
 
 ## Why it is different
 
-| Point | What that means in code |
-| --- | --- |
-| **Local-first** | No login. SQLite under `~/.video-workbench`. Media in a folder you choose (default `~/VideoWorkbench`). Copy the repo to another machine and run. |
-| **Bring your own models** | Text / image / video / speech are adapter × endpoint. One click + a key adds Qwen, DeepSeek, GPT, Kling, Doubao, MiniMax, and others. Any OpenAI-compatible base URL works. |
-| **Styles are directories** | Built-in Shanghai Animation Studio look and hand-drawn whiteboard. A third style is a folder under `stylePacks/`, a GitHub skill URL, a `SKILL.md`, or a zip. Packs can be taken with you. |
-| **Home is a wizard, not an empty project** | Idea → style → script → looks → finish. Unfinished work stays in the job center and resumes on Home. |
-| **Dubbing is opt-in** | Captions may attach after finish. Voices do not. You pick a voice on the timeline, preview it, then lay it down. Qwen / OpenAI / MiniMax / Doubao catalogs are listed; disconnected families are marked. |
-| **Spend is visible** | The Models page totals 30-day calls, tokens, images, seconds, and cost. A missing unit price records as zero — it does not invent a number. |
-| **Media binaries travel with the repo** | ffmpeg / ffprobe from package deps. yt-dlp as a platform binary, not a pipx shim and not your old `$PATH`. |
+| Point                                      | What that means in code                                                                                                                                                                                  |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Local-first**                            | No login. SQLite under `~/.video-workbench`. Media in a folder you choose (default `~/VideoWorkbench`). Copy the repo to another machine and run.                                                        |
+| **Bring your own models**                  | Text / image / video / speech are adapter × endpoint. One click + a key adds Qwen, DeepSeek, GPT, Kling, Doubao, MiniMax, and others. Any OpenAI-compatible base URL works.                              |
+| **Styles are directories**                 | Built-in Shanghai Animation Studio look and hand-drawn whiteboard. A third style is a folder under `stylePacks/`, a GitHub skill URL, a `SKILL.md`, or a zip. Packs can be taken with you.               |
+| **Home is a wizard, not an empty project** | Idea → style → script → looks → finish. Unfinished work stays in the job center and resumes on Home.                                                                                                     |
+| **Dubbing is opt-in**                      | Captions may attach after finish. Voices do not. You pick a voice on the timeline, preview it, then lay it down. Qwen / OpenAI / MiniMax / Doubao catalogs are listed; disconnected families are marked. |
+| **Spend is visible**                       | The Models page totals 30-day calls, tokens, images, seconds, and cost. A missing unit price records as zero — it does not invent a number.                                                              |
+| **Media binaries travel with the repo**    | ffmpeg / ffprobe from package deps. yt-dlp as a platform binary, not a pipx shim and not your old `$PATH`.                                                                                               |
 
 ## Workflow
 
@@ -349,46 +334,88 @@ Radar / novel / one-line idea
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/geekreel-keys.png" alt="Look confirmation">
+  <img src="docs/screenshots/geekreel-hero.png" alt="GeekReel AI Studio">
 </p>
+
+### Home
+
+Open the app to a prompt box and model pickers. Choose a style, then a script. Unfinished work resumes later.
 
 ![Home](docs/screenshots/geekreel-home.png)
 
-![Timeline voices](docs/screenshots/geekreel-timeline.png)
+### Looks, then finish
+
+Style constraints go into the prompts. Whiteboard uses text-to-video, not image-to-video from a still. Confirm looks before the batch run.
+
+![Looks](docs/screenshots/geekreel-keys.png)
+
+### Timeline: pick a voice, preview, then dub
+
+Picture and captions attach after finish. Dubbing waits for you. Short drama defaults to 1080×1920.
+
+![Timeline](docs/screenshots/geekreel-timeline.png)
+
+### Burned-in captions
+
+Spoken lines are split into short cues and fitted to the clip windows. ASS writes `PlayRes` at the export size so type does not fill half the frame.
 
 <p align="center">
-  <img src="docs/screenshots/geekreel-caption-1.jpg" width="46%" alt="Caption sample 1">
+  <img src="docs/screenshots/geekreel-caption-1.jpg" width="46%" alt="Caption 1">
   &nbsp;
-  <img src="docs/screenshots/geekreel-caption-2.jpg" width="46%" alt="Caption sample 2">
+  <img src="docs/screenshots/geekreel-caption-2.jpg" width="46%" alt="Caption 2">
 </p>
+
+### Models and 30-day spend
+
+Common models take a key. Custom endpoints and env-var import sit on the same page.
 
 ![Models](docs/screenshots/geekreel-models.png)
 
-![Radar](docs/screenshots/geekreel-radar.png)
+### Jobs
 
-![Library](docs/screenshots/geekreel-assets.png)
+Generate, index, export, and radar refresh share one queue. Cancel and retry. Unfinished films send you back to Home.
 
 ![Jobs](docs/screenshots/geekreel-jobs.png)
 
-The remaining screens (styles, analyze, novel-to-drama, series, projects, canvas, settings) use the same files as the Chinese gallery:
+### Library
 
-| File | Screen |
-| --- | --- |
-| `docs/screenshots/geekreel-home.png` | Home |
-| `docs/screenshots/geekreel-keys.png` | Looks / finish |
-| `docs/screenshots/geekreel-timeline.png` | Timeline + voice picker |
-| `docs/screenshots/geekreel-caption-1.jpg` / `caption-2.jpg` | Burned-in captions |
-| `docs/screenshots/geekreel-models.png` | Models + 30-day spend |
-| `docs/screenshots/geekreel-jobs.png` | Job center |
-| `docs/screenshots/geekreel-assets.png` | Asset library |
-| `docs/screenshots/geekreel-styles.png` | Style center |
-| `docs/screenshots/geekreel-radar.png` | Topic radar |
-| `docs/screenshots/geekreel-analyze.png` | Competitor analysis |
-| `docs/screenshots/geekreel-drama.png` | Novel → drama |
-| `docs/screenshots/geekreel-series.png` | Series |
-| `docs/screenshots/geekreel-projects.png` | Projects |
-| `docs/screenshots/geekreel-canvas.png` | Canvas |
-| `docs/screenshots/geekreel-settings.png` | Settings |
+One folder, browsed by work and type. Grid or list; filter by use and source. Open a video to remake it.
+
+![Library](docs/screenshots/geekreel-assets.png)
+
+### Styles
+
+![Styles](docs/screenshots/geekreel-styles.png)
+
+### Radar
+
+A web-search text model checks Weibo, Douyin, Bilibili, Zhihu, and Xiaohongshu. Heat is an estimate, labeled as such. “Make a video” opens the Home wizard.
+
+![Radar](docs/screenshots/geekreel-radar.png)
+
+### Analyze
+
+Paste a Douyin / Bilibili / YouTube / TikTok link, or pick a library video. Download, frame, transcribe, then split hook and pacing. Compare 2–4 reports. Douyin often fails to download — save the file and import it.
+
+![Analyze](docs/screenshots/geekreel-analyze.png)
+
+### Novel to drama · Series
+
+Upload `.txt` / `.md`, paste a readable URL, or paste the text. You get character files and an event list first. Edit the whole draft in chat (e.g. “rewrite in Chinese”) or open a single card. Mark it as a series to lock style and faces for the next episode.
+
+![Novel to drama](docs/screenshots/geekreel-drama.png)
+
+![Series](docs/screenshots/geekreel-series.png)
+
+### Projects · Canvas · Settings
+
+A project is a local folder. Canvas wires text / episode / scene / shot / image / video / TTS / ffmpeg nodes. Settings cover theme, language, and the library path. No account.
+
+![Projects](docs/screenshots/geekreel-projects.png)
+
+![Canvas](docs/screenshots/geekreel-canvas.png)
+
+![Settings](docs/screenshots/geekreel-settings.png)
 
 ## Feature set
 
@@ -410,8 +437,8 @@ cd geekreel
 ./scripts/dev.sh
 ```
 
-- UI: <http://127.0.0.1:5473>
-- API / WS: <http://127.0.0.1:4780> (Vite proxies `/api` and `/ws` in dev)
+- UI: [http://127.0.0.1:5473](http://127.0.0.1:5473)
+- API / WS: [http://127.0.0.1:4780](http://127.0.0.1:4780) (Vite proxies `/api` and `/ws` in dev)
 
 Production-style (build the web app, then serve it from the API process):
 
@@ -419,13 +446,13 @@ Production-style (build the web app, then serve it from the API process):
 ./scripts/start.sh
 ```
 
-Open <http://127.0.0.1:4780>. Add text / image / video endpoints on **Models** before you expect a finished clip. The UI points you there if keys are missing.
+Open [http://127.0.0.1:4780](http://127.0.0.1:4780). Add text / image / video endpoints on **Models** before you expect a finished clip. The UI points you there if keys are missing.
 
-| Path | Role |
-| --- | --- |
-| `~/.video-workbench/` | SQLite, encrypted keys, radar cache |
-| `~/VideoWorkbench/` | Default library (changeable, migratable) |
-| Project folder | Metadata, canvas, pipeline state, `export/` |
+| Path                  | Role                                        |
+| --------------------- | ------------------------------------------- |
+| `~/.video-workbench/` | SQLite, encrypted keys, radar cache         |
+| `~/VideoWorkbench/`   | Default library (changeable, migratable)    |
+| Project folder        | Metadata, canvas, pipeline state, `export/` |
 
 Override bind address with `VW_HOST` / `VW_PORT`. Override ffmpeg with `VW_FFMPEG`.
 
@@ -450,4 +477,4 @@ See [`docs/design.md`](docs/design.md) for tables, API prefixes, and the ADR lis
 
 ## License
 
-Use, modify, and distribute, including commercially. Keep [LICENSE](LICENSE) and a link to <https://github.com/geekhome-lab/geekreel> with redistributions. Provided as-is, without warranty.
+Use, modify, and distribute, including commercially. Keep [LICENSE](LICENSE) and a link to [https://github.com/geekhome-lab/geekreel](https://github.com/geekhome-lab/geekreel) with redistributions. Provided as-is, without warranty.
