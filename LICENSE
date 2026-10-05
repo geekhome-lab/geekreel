@@ -1,26 +1,24 @@
-GeekReel License
+This is free and unencumbered software released into the public domain.
 
-Copyright (c) 2026 geekhome-lab
-Original repository: https://github.com/geekhome-lab/geekreel
+Anyone is free to copy, modify, publish, use, compile, sell, or
+distribute this software, either in source code form or as a compiled
+binary, for any purpose, commercial or non-commercial, and by any
+means.
 
-You may use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of this software, provided that:
-
-  1. This license text is included with any substantial copy or
-     redistribution; and
-  2. The original repository URL above remains visible in that copy
-     (README, LICENSE, or an equivalent notice is enough).
+In jurisdictions that recognize copyright laws, the author or authors
+of this software dedicate any and all copyright interest in the
+software to the public domain. We make this dedication for the benefit
+of the public at large and to the detriment of our heirs and
+successors. We intend this dedication to be an overt act of
+relinquishment in perpetuity of all present and future rights to this
+software under copyright law.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
 EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
 
----
-
-可使用、修改、分发、再授权，包括商用。复制或再发布时请保留本许可全文，
-并带上原仓库地址：https://github.com/geekhome-lab/geekreel
-软件按现状提供，作者不承担任何担保或损害赔偿责任。
+For more information, please refer to <https://unlicense.org>

@@ -281,7 +281,7 @@ bun test packages/models/src/voices.test.ts
 
 ## 许可
 
-可使用、修改、分发，包括商用。再发布时保留 [LICENSE](LICENSE) 并带上开源地址：[https://github.com/geekhome-lab/geekreel](https://github.com/geekhome-lab/geekreel)。软件按现状提供，作者不承担担保责任。
+[Unlicense](LICENSE)。任何人都可以复制、修改、发布、使用、编译、出售或分发，不附加任何条件。软件按现状提供，作者不承担担保责任。
 
 ---
 
@@ -477,4 +477,4 @@ See [`docs/design.md`](docs/design.md) for tables, API prefixes, and the ADR lis
 
 ## License
 
-Use, modify, and distribute, including commercially. Keep [LICENSE](LICENSE) and a link to [https://github.com/geekhome-lab/geekreel](https://github.com/geekhome-lab/geekreel) with redistributions. Provided as-is, without warranty.
+[Unlicense](LICENSE). Copy, modify, publish, use, compile, sell, or distribute with no conditions. Provided as-is, without warranty.
