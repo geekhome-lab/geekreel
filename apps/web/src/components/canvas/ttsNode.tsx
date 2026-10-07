@@ -1,6 +1,7 @@
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from "@xyflow/react";
 import { useQuery } from "@tanstack/react-query";
 import type { ModelEndpoint } from "@vw/models";
+import { endpointOptionLabel } from "@vw/models";
 import { api } from "../../lib/api";
 import { iconPlay } from "../../lib/icons";
 import { useCanvasActions } from "./canvasContext";
@@ -43,7 +44,7 @@ export function TtsNode({ id, data, selected }: NodeProps<Node<TtsNodeData>>) {
         >
           <option value="">默认语音模型</option>
           {endpoints?.map((ep) => (
-            <option key={ep.id} value={ep.id}>{ep.name}</option>
+            <option key={ep.id} value={ep.id}>{endpointOptionLabel(ep)}</option>
           ))}
         </select>
         {data.error && <div className="rounded-lg bg-red-950/40 px-2 py-1.5 text-[10px] text-red-300">{data.error}</div>}

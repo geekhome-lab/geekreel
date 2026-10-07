@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { assetWorkFolder, assetWorkLabel, buildAssetFolderTree, buildAssetRelPath, parseAssetFileName } from "./index";
+import { assetWorkFolder, assetWorkLabel, buildAssetFolderTree, buildAssetRelPath, extFromMime, parseAssetFileName } from "./index";
 
 test("新资产落到作品夹和集", () => {
   const path = buildAssetRelPath({
@@ -22,6 +22,14 @@ test("旧年月路径归到未归类", () => {
 test("重命名能认出新旧文件名", () => {
   expect(parseAssetFileName("image_聂小倩_a3f2.png")?.title).toBe("聂小倩");
   expect(parseAssetFileName("1004_武松打虎_a3f2.png")?.title).toBe("武松打虎");
+});
+
+test("生成结果按 mime 落后缀，别把 webp/webm 写成 png/mp4", () => {
+  expect(extFromMime("image/webp", "png")).toBe("webp");
+  expect(extFromMime("image/jpeg", "png")).toBe("jpg");
+  expect(extFromMime("video/webm", "mp4")).toBe("webm");
+  expect(extFromMime("video/mp4", "webm")).toBe("mp4");
+  expect(extFromMime("application/octet-stream", "png")).toBe("png");
 });
 
 test("作品夹收成树，一百部也只是一层列表", () => {

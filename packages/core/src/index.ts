@@ -101,6 +101,22 @@ export function mimeFromExt(ext: string): string {
   return mimeMap[ext.toLowerCase()] ?? "application/octet-stream";
 }
 
+/** 生成结果的 Content-Type → 入库后缀。认不出就用 fallback。 */
+export function extFromMime(mime: string | undefined, fallback: string): string {
+  const m = (mime ?? "").toLowerCase();
+  const hit = Object.entries(mimeMap).find(([ext, type]) => type.split(";")[0] === m.split(";")[0] && ext !== "jpeg");
+  if (hit) return hit[0];
+  if (m.includes("jpeg") || m.includes("jpg")) return "jpg";
+  if (m.includes("webp")) return "webp";
+  if (m.includes("gif")) return "gif";
+  if (m.includes("png")) return "png";
+  if (m.includes("webm")) return "webm";
+  if (m.includes("mp4")) return "mp4";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("wav")) return "wav";
+  return fallback;
+}
+
 /** 清洗标题为文件名片段：去非法字符、压缩空白、截断。 */
 export function sanitizeTitle(raw: string, max = 40): string {
   const cleaned = raw

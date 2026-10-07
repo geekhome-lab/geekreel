@@ -302,9 +302,11 @@ export function ModelsPage() {
               title={capabilityLabels[cap]}
               open={isOpen(key, fallback)}
               onToggle={() => toggle(key, fallback)}
-              extra={list.length ? `${list.length} 个` : "还没有"}
+              extra={endpoints == null ? "…" : list.length ? `${list.length} 个` : "还没有"}
             >
-              {list.length === 0 ? (
+              {endpoints == null ? (
+                <p className="text-xs text-fg-faint">加载中…</p>
+              ) : list.length === 0 ? (
                 <p className="text-xs text-fg-faint">还没加。上面点一个常用的，填密钥就行。</p>
               ) : (
                 <div className="space-y-2">
@@ -336,10 +338,10 @@ export function ModelsPage() {
                           <div className="ml-auto flex items-center gap-1">
                             <button
                               className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent disabled:opacity-40"
-                              disabled={testMutation.isPending}
+                              disabled={testMutation.isPending && testMutation.variables === ep.id}
                               onClick={() => testMutation.mutate(ep.id)}
                             >
-                              测试
+                              {testMutation.isPending && testMutation.variables === ep.id ? "测…" : "测试"}
                             </button>
                             {!ep.isDefault && (
                               <button
@@ -713,7 +715,17 @@ function EndpointModal(props: {
   useEffect(() => {
     if (ep) return;
     if (!adaptersForCap.some((a) => a.type === adapterType)) {
-      setAdapterType(adaptersForCap[0]?.type ?? "");
+      const next = adaptersForCap[0]?.type ?? "";
+      setAdapterType(next);
+      const a = props.adapters.find((x) => x.type === next);
+      if (!a) return;
+      setConfig((m) => {
+        const merged = { ...m };
+        for (const f of a.configFields) {
+          if (!(merged[f.key] ?? "").trim() && f.defaultValue) merged[f.key] = f.defaultValue;
+        }
+        return merged;
+      });
     }
   }, [capability]);
 
@@ -748,6 +760,15 @@ function EndpointModal(props: {
       if (ep) {
         if (!sent.apiKey?.trim() || sent.apiKey.includes("…") || sent.apiKey.includes("...")) delete sent.apiKey;
         if (!sent.secretKey?.trim() || sent.secretKey.includes("…") || sent.secretKey.includes("...")) delete sent.secretKey;
+      }
+      if (!ep && adapterType === "comfyui") {
+        if (!sent.baseUrl?.trim()) throw new Error("请填写 ComfyUI 地址");
+        if (capability === "video" && !sent.workflow?.trim()) {
+          throw new Error("出视频请贴 ComfyUI 的 API Format 工作流");
+        }
+        if (capability === "image" && !sent.model?.trim() && !sent.workflow?.trim()) {
+          throw new Error("出图请填 checkpoint 或贴工作流");
+        }
       }
       const payload: Record<string, unknown> = { name: name.trim(), config: sent, webSearch, vision };
       if (ep) {
@@ -803,7 +824,19 @@ function EndpointModal(props: {
               <select
                 className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none"
                 value={adapterType}
-                onChange={(e) => setAdapterType(e.target.value)}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setAdapterType(next);
+                  const a = props.adapters.find((x) => x.type === next);
+                  if (!a) return;
+                  setConfig((m) => {
+                    const merged = { ...m };
+                    for (const f of a.configFields) {
+                      if (!(merged[f.key] ?? "").trim() && f.defaultValue) merged[f.key] = f.defaultValue;
+                    }
+                    return merged;
+                  });
+                }}
               >
                 {adaptersForCap.map((a) => (
                   <option key={a.type} value={a.type}>

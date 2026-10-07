@@ -20,6 +20,13 @@ export const capabilityLabels: Record<Capability, string> = {
   tts: "语音模型",
 };
 
+/** 下拉里同名端点靠模型 id 分开，例如两个都叫「通义万相视频」。 */
+export function endpointOptionLabel(ep: { name: string; config: Record<string, string> }): string {
+  const model = (ep.config.model ?? "").trim();
+  if (model && !ep.name.includes(model)) return `${ep.name} · ${model}`;
+  return ep.name;
+}
+
 export interface FieldSpec {
   key: string;
   label: string;
@@ -63,7 +70,6 @@ export interface ChatResult {
 }
 
 export interface ImageGenResult {
-  /** 图片二进制内容（PNG） */
   data: Uint8Array;
   mime: string;
 }

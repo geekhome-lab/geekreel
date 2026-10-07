@@ -50,8 +50,8 @@ function rowToEndpoint(row: EndpointRow, withKey = false): ModelEndpoint {
     config,
     webSearch: row.webSearch === 1,
     vision: Number(row.vision) === 1,
-    enabled: row.enabled === 1,
-    isDefault: row.isDefault === 1,
+    enabled: Number(row.enabled) === 1,
+    isDefault: Number(row.isDefault) === 1,
     createdAt: row.createdAt,
   };
 }

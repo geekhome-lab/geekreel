@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { clipDuration, type TimelineDoc } from "@vw/core";
+import { clipDuration, extFromFileName, extFromMime, mimeFromExt, type TimelineDoc } from "@vw/core";
 import { getAdapter, wanVideoChunks } from "@vw/models";
 import { injectImagePrompt } from "@vw/style";
 import { burnCaption, concatVideos, cropAspect, detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
@@ -66,7 +66,7 @@ export const genImageHandler: JobHandler = async (job, ctx) => {
     : storeAsset({
         type: "image",
         title: prompt.replace(/\s+/g, " ").slice(0, 24) || "生成图片",
-        ext: "png",
+        ext: extFromMime(result.mime, "png"),
         source: "canvas",
         projectId,
         data: result.data,
@@ -100,7 +100,7 @@ export const genTtsHandler: JobHandler = async (job, ctx) => {
 
   ctx.progress(0.25, `正在配音 ${endpoint.name}`);
   const speech = await adapter.generateSpeech(endpoint.config, { text, voice: payload.voice, signal: ctx.signal });
-  const ext = speech.mime.includes("wav") ? "wav" : "mp3";
+  const ext = extFromMime(speech.mime, "mp3");
   const asset = storeAsset({
     type: "audio",
     title: text.slice(0, 20) || "配音",
@@ -161,7 +161,7 @@ export const timelineTtsHandler: JobHandler = async (job, ctx) => {
   for (const sub of subs) {
     ctx.progress(0.1 + (done / subs.length) * 0.8, `配音 ${done + 1}/${subs.length}`);
     const speech = await adapter.generateSpeech(endpoint.config, { text: sub.text!.trim(), signal: ctx.signal });
-    const ext = speech.mime.includes("wav") ? "wav" : "mp3";
+    const ext = extFromMime(speech.mime, "mp3");
     const asset = storeAsset({
       type: "audio",
       title: sub.text!.trim().slice(0, 20) || "配音",
@@ -221,7 +221,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
   const prompt = applyProjectStyle(payload.prompt.trim(), projectId);
   ctx.progress(0.05, "找视频模型");
   const endpoint = resolveEndpoint("video", payload.endpointId);
-  if (!endpoint) throw new Error("还没有视频模型。到「模型」页加可灵、豆包或 OpenAI 兼容的视频端点。");
+  if (!endpoint) throw new Error("还没有视频模型。到「模型」页加可灵、豆包、通义万相或本机 ComfyUI。");
   const adapter = getAdapter(endpoint.adapterType);
   if (!adapter?.generateVideo) throw new Error("这个模型不会出视频，换一个视频模型");
 
@@ -229,7 +229,10 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     if (!id) return undefined;
     const img = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(id) as { path: string } | null;
     if (!img) return undefined;
-    return { mime: "image/png", data: new Uint8Array(readFileSync(absInLibrary(img.path))) };
+    return {
+      mime: mimeFromExt(extFromFileName(img.path) || "png"),
+      data: new Uint8Array(readFileSync(absInLibrary(img.path))),
+    };
   };
   const pack = projectPack(projectId);
   const skipRef = isHandDrawnPack(pack);
@@ -286,7 +289,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
       }
     }
   }
-  const ext = mime.includes("webm") ? "webm" : "mp4";
+  const ext = extFromMime(mime, "mp4");
   const asset = storeAsset({
     type: "video",
     title: prompt.replace(/\s+/g, " ").slice(0, 24) || "生成视频",

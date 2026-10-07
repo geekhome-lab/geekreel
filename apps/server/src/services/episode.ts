@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { emptyTimelineDoc, type DramaBible, type DramaShot } from "@vw/core";
+import { emptyTimelineDoc, extFromMime, type DramaBible, type DramaShot } from "@vw/core";
 import { detectBins, probe, videoThumbnail } from "@vw/media";
 import { getAdapter } from "@vw/models";
 import { lockCastIntoPrompt, pickCastImageIds, shotDurationSec } from "@vw/pipeline";
@@ -106,7 +106,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
         const asset = storeAsset({
           type: "image",
           title: `${bible.title} E${ep.index}-${i + 1}`,
-          ext: "png",
+          ext: extFromMime(still.mime, "png"),
           source: "pipeline",
           projectId,
           data: still.data,
@@ -132,7 +132,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
         const asset = storeAsset({
           type: "video",
           title: `${bible.title} E${ep.index}-${i + 1}镜`,
-          ext: "mp4",
+          ext: extFromMime(result.mime, "mp4"),
           source: "pipeline",
           projectId,
           data: result.data,

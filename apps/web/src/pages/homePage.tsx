@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import type { Capability, ModelEndpoint } from "@vw/models";
-import { capabilityLabels } from "@vw/models";
+import { capabilityLabels, endpointOptionLabel } from "@vw/models";
 import { spokenLine, type Job, type KeyAssetNeed, type Project, type ScriptDoc, type ScriptLine, type ScriptNote, type StylePackPublic } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import {
@@ -756,7 +756,14 @@ export function HomePage() {
 
           <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5">
             {modelCaps.map((cap) => (
-              <ModelPick key={cap} cap={cap} list={byCap[cap]} value={pick(cap)} onChange={(id) => setPick(cap, id)} />
+              <ModelPick
+                key={cap}
+                cap={cap}
+                ready={endpoints !== undefined}
+                list={byCap[cap]}
+                value={pick(cap)}
+                onChange={(id) => setPick(cap, id)}
+              />
             ))}
           </div>
 
@@ -999,11 +1006,19 @@ function KeyCard(props: {
 
 function ModelPick(props: {
   cap: Capability;
+  ready: boolean;
   list: ModelEndpoint[];
   value: string;
   onChange: (id: string) => void;
 }) {
   const navigate = useNavigate();
+  if (!props.ready) {
+    return (
+      <span className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-fg-faint">
+        {capabilityLabels[props.cap]}：…
+      </span>
+    );
+  }
   if (props.list.length === 0) {
     return (
       <button
@@ -1017,10 +1032,10 @@ function ModelPick(props: {
   return (
     <label className="flex items-center gap-1.5 rounded-lg border border-line bg-panel-2 px-2.5 py-1 text-[11px] text-fg-dim">
       {capabilityLabels[props.cap]}
-      <select className="max-w-32 bg-transparent text-fg outline-none" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
+      <select className="max-w-40 bg-transparent text-fg outline-none" value={props.value} onChange={(e) => props.onChange(e.target.value)}>
         {props.list.map((ep) => (
           <option key={ep.id} value={ep.id}>
-            {ep.name}
+            {endpointOptionLabel(ep)}
           </option>
         ))}
       </select>
