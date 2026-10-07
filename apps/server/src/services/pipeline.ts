@@ -13,8 +13,9 @@ import { detectBins, paperStill } from "@vw/media";
 import { getAdapter } from "@vw/models";
 import { injectImagePrompt, type LoadedPack } from "@vw/style";
 import {
-  lockCastIntoPrompt,
+  lockProductionIntoPrompt,
   assetsFromCast,
+  bindEntitiesToShots,
   bibleFromCastPrompt,
   bibleFromWhiteboard,
   CAST_REVISE_SYSTEM,
@@ -49,6 +50,7 @@ import { resolveEndpoint } from "./models";
 import { attachEpisode, createSeries, getSeries, seriesBible } from "./series";
 import { loadPack } from "./styles";
 import { chatMetered } from "./usage";
+import { paintCastViews, paintExtraViews } from "./entityArt";
 
 interface PipeRow {
   id: string;
@@ -132,9 +134,10 @@ function writeCanvas(projectId: string, dir: string, bible: DramaBible, imageEnd
       const textId = `t_${ei}_${si}`;
       const genId = `g_${ei}_${si}`;
       const prev = si > 0 ? ep.shots[si - 1] : ei > 0 ? bible.episodes[ei - 1]?.shots.at(-1) : undefined;
-      const prompt = lockCastIntoPrompt({
+      const prompt = lockProductionIntoPrompt({
         prompt: shot.imagePrompt || shot.visual,
-        cast: bible.cast ?? [],
+        bible,
+        entityIds: shot.entityIds,
         lastFrame: prev?.visual ?? null,
         dialogue: shot.line || null,
       });
@@ -308,7 +311,7 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
         palette: lockedBible.palette.colors.length ? lockedBible.palette : { note: doc.paletteNote, colors: doc.colors.length ? doc.colors : lockedBible.palette.colors },
         cast: lockedCast,
         events: doc.events,
-        assets: assetsFromCast(lockedCast),
+        assets: assetsFromCast(lockedCast, lockedBible.assets),
         episodes: [],
       };
     } else {
@@ -326,7 +329,7 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
         palette: { note: doc.paletteNote, colors: doc.colors.length ? doc.colors : parseDramaBible("", story).palette.colors },
         cast: doc.cast,
         events: doc.events,
-        assets: assetsFromCast(doc.cast),
+        assets: assetsFromCast(doc.cast, doc.extras),
         episodes: [],
       };
     }
@@ -339,14 +342,16 @@ export const pipelineRunHandler: JobHandler = async (job, ctx) => {
       palette: lockedBible?.palette ?? { note: doc.paletteNote, colors: doc.colors },
       cast: lockedCast.length ? lockedCast : doc.cast,
       events: doc.events,
-      assets: assetsFromCast(lockedCast.length ? lockedCast : doc.cast),
+      assets: assetsFromCast(lockedCast.length ? lockedCast : doc.cast, lockedBible?.assets ?? doc.extras),
       episodes: [],
     };
   }
 
-  ctx.progress(0.65, "给角色出定妆照");
+  ctx.progress(0.65, "给出场人物和场景的多视图定妆");
   bible.cast = await paintCast(projectId, bible.cast ?? [], payload.imageEndpointId);
-  bible.assets = assetsFromCast(bible.cast);
+  const extras = (bible.assets ?? []).filter((a) => a.kind !== "character");
+  const paintedExtras = await paintExtraViews(projectId, extras, payload.imageEndpointId);
+  bible.assets = assetsFromCast(bible.cast, paintedExtras);
 
   mkdirSync(join(directory, "pipeline"), { recursive: true });
   writeFileSync(join(directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
@@ -622,7 +627,7 @@ export async function revisePipelineCast(
     const painted = await paintCast(row.projectId, [next], typeof input.imageEndpointId === "string" ? input.imageEndpointId : undefined);
     next = painted[0] ?? next;
     bible.cast = (bible.cast ?? []).map((c) => (c.id === cur.id ? next : c));
-    bible.assets = assetsFromCast(bible.cast);
+    bible.assets = assetsFromCast(bible.cast, (bible.assets ?? []).filter((a) => a.kind !== "character"));
     persistBible(row, bible, story, input);
     return bible;
   }
@@ -649,34 +654,7 @@ async function paintCast(
   cast: CharacterDossier[],
   imageEndpointId?: string | null,
 ): Promise<CharacterDossier[]> {
-  const endpoint = resolveEndpoint("image", imageEndpointId ?? undefined);
-  if (!endpoint) return cast;
-  const adapter = getAdapter(endpoint.adapterType);
-  if (!adapter?.generateImage) return cast;
-  const out = [...cast];
-  for (let i = 0; i < Math.min(out.length, 8); i++) {
-    const c = out[i]!;
-    if (c.imageAssetId) continue;
-    try {
-      const result = await adapter.generateImage(endpoint.config, {
-        prompt: `角色设定，半身或全身，白底，正对镜头，无文字，无水印。${c.prompt || c.name}`,
-        size: "1024x1024",
-      });
-      const asset = storeAsset({
-        type: "image",
-        title: `${c.name}定妆`,
-        ext: "png",
-        source: "pipeline",
-        projectId,
-        data: result.data,
-      });
-      updateAssetMeta(asset.id, { kind: "character" });
-      out[i] = { ...c, imageAssetId: asset.id };
-    } catch {
-      /* 没图也能先看档案 */
-    }
-  }
-  return out;
+  return paintCastViews(projectId, cast, imageEndpointId);
 }
 
 async function fillBibleFromCast(opts: {
@@ -713,8 +691,10 @@ async function fillBibleFromCast(opts: {
   bible.palette = opts.bible.palette.colors.length ? opts.bible.palette : bible.palette;
   bible.cast = opts.bible.cast;
   bible.events = opts.bible.events;
-  bible.assets = assetsFromCast(opts.bible.cast ?? []) ;
-  if (opts.bible.assets.length && !bible.assets.length) bible.assets = opts.bible.assets;
+  bible.assets = assetsFromCast(opts.bible.cast ?? [], (opts.bible.assets ?? []).filter((a) => a.kind !== "character"));
+  if (opts.bible.assets.length && !bible.assets.some((a) => a.kind !== "character")) {
+    bible.assets = [...bible.assets, ...opts.bible.assets.filter((a) => a.kind !== "character")];
+  }
   bible.packId = opts.pack?.public.id ?? opts.bible.packId;
   bible.substyle = opts.substyle;
   if (opts.continuing) {
@@ -741,7 +721,7 @@ async function fillBibleFromCast(opts: {
       }),
     };
   }
-  return bible;
+  return bindEntitiesToShots({ ...bible, bgmAssetId: opts.bible.bgmAssetId ?? null });
 }
 
 export function retryPipelineBible(id: string) {

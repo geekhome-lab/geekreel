@@ -87,6 +87,33 @@ export function audioTracks(doc: TimelineDoc): TimelineTrack[] {
   return doc.tracks.filter((t) => t.type === "audio");
 }
 
+const BGM_TRACK_ID = "a_bgm";
+
+/** 整条片子铺一层配乐，音量压低，不盖过人声。 */
+export function layBgm(doc: TimelineDoc, assetId: string, opts?: { volume?: number; durationMs?: number }): TimelineDoc {
+  const durationMs = Math.max(opts?.durationMs ?? timelineDuration(doc), 1000);
+  const volume = Math.min(1, Math.max(0.04, opts?.volume ?? 0.22));
+  const tracks = doc.tracks.filter((t) => t.id !== BGM_TRACK_ID);
+  const videoIdx = tracks.findIndex((t) => t.type === "video");
+  const insertAt = videoIdx >= 0 ? videoIdx + 1 : tracks.length;
+  tracks.splice(insertAt, 0, {
+    id: BGM_TRACK_ID,
+    type: "audio",
+    name: "配乐",
+    clips: [
+      {
+        id: "c_bgm",
+        assetId,
+        startMs: 0,
+        inMs: 0,
+        outMs: durationMs,
+        volume,
+      },
+    ],
+  });
+  return { ...doc, tracks };
+}
+
 // ---------------------------------------------------------------------------
 // SRT
 // ---------------------------------------------------------------------------

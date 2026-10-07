@@ -64,11 +64,21 @@ export interface PaletteDoc {
   note: string;
 }
 
+export type EntityKind = "character" | "scene" | "prop";
+export type EntityViewKind = "face" | "front" | "side" | "full";
+
+export interface EntityView {
+  kind: EntityViewKind;
+  assetId: string;
+}
+
 export interface DramaAssetItem {
   id: string;
-  kind: "character" | "scene" | "prop";
+  kind: EntityKind;
   name: string;
   prompt: string;
+  imageAssetId?: string | null;
+  views?: EntityView[];
 }
 
 /** 通读全文后的角色档案，不是点选风格包 */
@@ -81,6 +91,7 @@ export interface CharacterDossier {
   outfit: string;
   prompt: string;
   imageAssetId?: string | null;
+  views?: EntityView[];
 }
 
 export interface StoryEvent {
@@ -101,7 +112,9 @@ export interface DramaShot {
   imageAssetId?: string | null;
   videoAssetId?: string | null;
   audioAssetId?: string | null;
-  /** 视频模型按台词出了嘴型；false 表示用了定妆+配音兜底 */
+  /** 这一镜必须引用的角色 / 场景 / 道具 id */
+  entityIds?: string[];
+  /** 对口型那道过了才是 true。失败时仍保留原视频，不改成静帧。 */
   lipSynced?: boolean;
   lipsNote?: string | null;
 }
@@ -124,6 +137,8 @@ export interface DramaBible {
   episodes: DramaEpisode[];
   cast?: CharacterDossier[];
   events?: StoryEvent[];
+  /** 整部沿用的配乐，出集时铺到时间线 */
+  bgmAssetId?: string | null;
 }
 
 export interface PipelineRun {
@@ -183,10 +198,11 @@ export interface ScriptDoc {
 
 export interface KeyAssetNeed {
   id: string;
-  kind: "character" | "scene";
+  kind: EntityKind;
   name: string;
   prompt: string;
   assetId?: string | null;
+  views?: EntityView[];
 }
 
 /** 一场戏里要说出口的台词。讲解片没写对白时，用场次名当旁白。 */

@@ -969,10 +969,23 @@ function KeyCard(props: {
           <span className="text-[11px] text-fg-faint">还没有图</span>
         )}
       </div>
+      {k.views && k.views.length > 1 ? (
+        <div className="mt-1 flex gap-1">
+          {k.views.map((v) => (
+            <img
+              key={v.kind}
+              src={`/api/assets/${v.assetId}/file?variant=thumb&v=${props.bust ?? 0}`}
+              alt={v.kind}
+              className="h-10 w-8 rounded object-cover"
+              title={v.kind === "face" ? "脸" : v.kind === "side" ? "侧面" : v.kind === "front" ? "正面" : "全景"}
+            />
+          ))}
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center justify-between gap-1">
         <div>
           <div className="text-xs font-medium">{k.name}</div>
-          <div className="text-[10px] text-fg-faint">{k.kind === "character" ? "人物" : "场景"}</div>
+          <div className="text-[10px] text-fg-faint">{k.kind === "character" ? "人物" : k.kind === "prop" ? "道具" : "场景"}</div>
         </div>
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1">

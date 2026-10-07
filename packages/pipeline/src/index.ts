@@ -4,8 +4,10 @@
  */
 
 import type { DramaAssetItem, DramaBible, DramaEpisode, DramaShot, PaletteDoc } from "@vw/core";
+import { bindEntitiesToShots } from "./entities";
 
 export * from "./lock";
+export * from "./entities";
 export * from "./script";
 export * from "./dialogue";
 
@@ -94,7 +96,7 @@ function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episo
         };
       }).filter((e) => e.title || e.summary)
     : undefined;
-  return {
+  return bindEntitiesToShots({
     title: String(r.title ?? "").trim() || guessTitle(fallbackStory),
     packId: null,
     substyle: null,
@@ -103,7 +105,7 @@ function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episo
     episodes,
     cast,
     events,
-  };
+  });
 }
 
 function normalizePalette(raw: unknown): PaletteDoc {
@@ -128,6 +130,7 @@ function normalizeAsset(raw: unknown): DramaAssetItem {
     kind,
     name: String(x.name ?? "").trim(),
     prompt: String(x.prompt ?? "").trim(),
+    imageAssetId: typeof x.imageAssetId === "string" ? x.imageAssetId : null,
   };
 }
 
@@ -154,6 +157,7 @@ function normalizeShot(raw: unknown, i: number): DramaShot {
     visual: String(x.visual ?? "").trim(),
     line: String(x.line ?? "").trim(),
     imagePrompt: String(x.imagePrompt ?? x.visual ?? "").trim(),
+    entityIds: Array.isArray(x.entityIds) ? x.entityIds.map((id) => String(id)).filter(Boolean) : undefined,
   };
 }
 

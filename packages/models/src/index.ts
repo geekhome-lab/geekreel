@@ -130,6 +130,18 @@ export interface ModelAdapter {
       lastFrame?: { mime: string; data: Uint8Array };
       dialogue?: string;
       audio?: boolean;
+      voice?: { mime: string; data: Uint8Array };
+    },
+  ): Promise<VideoGenResult>;
+  /** 视频出来后再对嘴。没有就用 generateVideo + 配音。 */
+  lipSync?(
+    config: Record<string, string>,
+    req: {
+      image?: { mime: string; data: Uint8Array };
+      audio: { mime: string; data: Uint8Array };
+      text?: string;
+      durationSec?: number;
+      signal?: AbortSignal;
     },
   ): Promise<VideoGenResult>;
   transcribe?(
@@ -397,6 +409,21 @@ export const openaiCompatible: ModelAdapter = {
       return dashscopeGenerateVideo(config, req);
     }
     return openaiGenerateVideo(config, req);
+  },
+
+  async lipSync(config, req) {
+    const prompt = req.text?.trim()
+      ? `角色对着镜头说：「${req.text.trim()}」。嘴型必须对上这句，能出声就一起出声。`
+      : "对着镜头说话，嘴型对齐配音。";
+    return this.generateVideo!(config, {
+      prompt,
+      durationSec: req.durationSec,
+      image: req.image,
+      dialogue: req.text,
+      audio: true,
+      voice: req.audio,
+      signal: req.signal,
+    });
   },
 };
 

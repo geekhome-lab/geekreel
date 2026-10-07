@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { emptyTimelineDoc, type TimelineDoc } from "@vw/core";
+import { emptyTimelineDoc, layBgm, type TimelineDoc } from "@vw/core";
 import { buildFinishTimeline } from "@vw/pipeline";
 import { db } from "../db";
 import { jobQueue } from "../jobs/queue";
-import { err, ok } from "../lib/resp";
+import { err, now, ok } from "../lib/resp";
 import { collectFinishClips } from "../services/dub";
+import { exportJianyingDraft } from "../services/jianying";
 import { listEndpoints } from "../services/models";
 
 /**
@@ -140,4 +141,58 @@ timelineRoutes.post("/tts", async (c) => {
   }
   const job = jobQueue.submit("timeline.tts", { projectId: body.projectId, endpointId: body.endpointId }, body.projectId);
   return ok(c, job);
+});
+
+/** 铺一层配乐，并记住给下一集用 */
+timelineRoutes.post("/project/:projectId/bgm", async (c) => {
+  const projectId = c.req.param("projectId");
+  const abs = timelineAbs(projectId);
+  if (!abs) return err(c, "项目不存在", 404);
+  const body = (await c.req.json().catch(() => null)) as { assetId?: string; volume?: number } | null;
+  if (!body?.assetId) return err(c, "先选一段配乐");
+  if (!existsSync(abs)) return err(c, "时间线还是空的", 422);
+  const doc = JSON.parse(readFileSync(abs, "utf-8")) as TimelineDoc;
+  const next = layBgm(doc, body.assetId, { volume: body.volume });
+  const tmp = `${abs}.tmp-${process.pid}`;
+  writeFileSync(tmp, JSON.stringify(next));
+  renameSync(tmp, abs);
+
+  const pipe = db
+    .query("SELECT id, stateJson FROM pipelines WHERE projectId = ? ORDER BY updatedAt DESC LIMIT 1")
+    .get(projectId) as { id: string; stateJson: string } | null;
+  if (pipe) {
+    try {
+      const st = JSON.parse(pipe.stateJson) as { bible?: { bgmAssetId?: string | null } };
+      if (st.bible) {
+        st.bible.bgmAssetId = body.assetId;
+        db.run("UPDATE pipelines SET stateJson = ?, updatedAt = ? WHERE id = ?", [JSON.stringify(st), now(), pipe.id]);
+      }
+    } catch {
+      /* 时间线已经铺上 */
+    }
+  }
+  const dir = projectDir(projectId);
+  if (dir) {
+    const biblePath = join(dir, "pipeline", "bible.json");
+    if (existsSync(biblePath)) {
+      try {
+        const bible = JSON.parse(readFileSync(biblePath, "utf-8")) as { bgmAssetId?: string | null };
+        bible.bgmAssetId = body.assetId;
+        writeFileSync(biblePath, JSON.stringify(bible, null, 2));
+      } catch {
+        /* 圣经写失败不影响时间线 */
+      }
+    }
+  }
+  return ok(c, { doc: next });
+});
+
+timelineRoutes.post("/project/:projectId/jianying", (c) => {
+  const projectId = c.req.param("projectId");
+  if (!projectDir(projectId)) return err(c, "项目不存在", 404);
+  try {
+    return ok(c, exportJianyingDraft(projectId));
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
 });

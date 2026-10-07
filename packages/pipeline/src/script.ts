@@ -45,7 +45,7 @@ export function keysPrompt(script: ScriptDoc, styleHint: string): string {
 {"keys":[{"id":"K01","kind":"${whiteboard ? "scene" : "character"}","name":"名","prompt":"能出图的描述"}]}
 
 规则：
-- ${whiteboard ? "手绘白板：出概念示意图，不要写实人物定妆照。人物用简笔轮廓，场景用一张一概念的线稿。最多 4 张。" : "人物按出场重要角色来，最多 5 个；场景最多 3 个；总共不超过 8 张。"}
+- ${whiteboard ? "手绘白板：出概念示意图，不要写实人物定妆照。人物用简笔轮廓，场景用一张一概念的线稿。最多 4 张。" : "人物按出场重要角色来，最多 4 个；场景最多 2 个；关键道具最多 2 个；总共不超过 8 张。"}
 - prompt 写清楚能出图，不要镜头术语。
 ${styleHint ? `- 画面风格（必须写进每条 prompt）：\n${styleHint}\n` : ""}
 剧本：
@@ -215,7 +215,7 @@ function normalizeLine(raw: unknown, i: number): ScriptLine {
 
 function normalizeKey(raw: unknown, i: number): KeyAssetNeed {
   const x = (raw ?? {}) as Record<string, unknown>;
-  const kind = x.kind === "scene" ? "scene" : "character";
+  const kind = x.kind === "scene" || x.kind === "prop" ? x.kind : "character";
   return {
     id: String(x.id ?? `K${String(i + 1).padStart(2, "0")}`),
     kind,

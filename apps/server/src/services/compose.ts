@@ -23,6 +23,7 @@ import type { FreePlan, KeyAssetNeed, ScriptDoc, ScriptNote } from "@vw/core";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { storeAsset, updateAssetMeta } from "./library";
+import { paintViews } from "./entityArt";
 import { resolveEndpoint } from "./models";
 import { loadPack } from "./styles";
 import { saveProjectScript } from "./scriptStore";
@@ -202,24 +203,37 @@ export const composeKeysHandler: JobHandler = async (job, ctx) => {
     } else {
       prompt = `${styleHint}\n${item.prompt}`;
     }
-    const still = await imageAd.generateImage(image.config, {
+    const whiteboard = /白板|线稿|示意图|素描|手绘/.test(styleHint);
+    if (whiteboard) {
+      const still = await imageAd.generateImage(image.config, {
+        prompt,
+        size: "1024x1024",
+        signal: ctx.signal,
+      });
+      const asset = storeAsset({
+        type: "image",
+        title: item.name,
+        ext: "png",
+        source: "pipeline",
+        projectId,
+        data: still.data,
+      });
+      updateAssetMeta(asset.id, { kind: item.kind });
+      recordUsage({ endpoint: image, projectId, jobType: "compose.keys", images: 1 });
+      out.push({ ...item, prompt, assetId: asset.id });
+      continue;
+    }
+    const painted = await paintViews({
+      projectId: projectId ?? "",
+      kind: item.kind,
+      name: item.name,
       prompt,
-      size: item.kind === "character" ? "1024x1536" : "1024x1024",
+      imageEndpointId: payload.imageEndpointId,
       signal: ctx.signal,
     });
-    const asset = storeAsset({
-      type: "image",
-      title: item.name,
-      ext: "png",
-      source: "pipeline",
-      projectId,
-      data: still.data,
-    });
-    updateAssetMeta(asset.id, { kind: item.kind });
-    recordUsage({ endpoint: image, projectId, jobType: "compose.keys", images: 1 });
-    out.push({ ...item, prompt, assetId: asset.id });
+    out.push({ ...item, prompt, assetId: painted.imageAssetId, views: painted.views });
   }
 
-  ctx.progress(1, "人物和场景图好了，回来确认");
+  ctx.progress(1, "人物、场景、道具的定妆好了，回来确认");
   return { keys: out, projectId };
 };

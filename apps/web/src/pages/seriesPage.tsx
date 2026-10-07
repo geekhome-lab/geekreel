@@ -131,7 +131,7 @@ function SeriesCard(props: {
             <span className="text-[11px] text-fg-faint">已 {s.episodeCount} 集</span>
           </div>
           {detail?.bible?.episodes?.some((e) => e.shots.some((sh) => sh.lipsNote)) ? (
-            <p className="mt-2 text-[11px] text-amber-300">有几镜没对上嘴。换会对口型的视频模型，再点「出这一集」。</p>
+            <p className="mt-2 text-[11px] text-amber-300">有几镜对口型没过。原视频还在，没有改成静帧。</p>
           ) : null}
           {cast.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">

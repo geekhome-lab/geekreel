@@ -60,6 +60,8 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   const [pps, setPps] = useState(50); // 缩放：像素/秒
   const [selected, setSelected] = useState<string | null>(null); // clipId
   const [picking, setPicking] = useState(false);
+  const [pickingBgm, setPickingBgm] = useState(false);
+  const [draftHint, setDraftHint] = useState("");
   const [editingSub, setEditingSub] = useState<string | null>(null);
   const [exportJob, setExportJob] = useState<{ id: string; status: string; assetId?: string; error?: string } | null>(null);
   const [ttsBusy, setTtsBusy] = useState(false);
@@ -327,7 +329,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
       {/* 工具栏 */}
       {lipsNotes.length > 0 ? (
         <p className="mb-2 rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
-          {lipsNotes.length} 镜画面没对上嘴，配音已按台词铺上。这里挪轨、改字幕即可。
+          {lipsNotes.length} 镜对口型没过。原视频还在，没有改成静帧。{lipsNotes[0]?.lipsNote}
         </p>
       ) : null}
       <p className="mb-2 text-[11px] text-fg-faint">出片后画面和字幕会自动装上。配音要在这里选音色、试听，再铺上。</p>
@@ -386,6 +388,22 @@ function TimelineEditor({ projectId }: { projectId: string }) {
           {assembling ? "装配中…" : "从画布装上"}
         </ToolBtn>
         <ToolBtn onClick={() => setPicking(true)}>{iconPlus({ width: 12, height: 12 })} 添加素材</ToolBtn>
+        <ToolBtn onClick={() => setPickingBgm(true)}>铺配乐</ToolBtn>
+        <ToolBtn
+          onClick={async () => {
+            try {
+              const r = await apiJson<{ draftDir: string; copiedToApp: string | null; hint: string }>(
+                `/api/timeline/project/${projectId}/jianying`,
+                "post",
+              );
+              setDraftHint(r.hint + (r.copiedToApp ? "" : ` ${r.draftDir}`));
+            } catch (e) {
+              setDraftHint(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        >
+          导出剪映草稿
+        </ToolBtn>
         <ToolBtn onClick={() => srtInput.current?.click()}>{iconUpload({ width: 12, height: 12 })} 导入 SRT</ToolBtn>
         <ToolBtn onClick={addSubtitle}>加字幕</ToolBtn>
         <label className="flex items-center gap-1.5 text-[11px] text-fg-dim">
@@ -441,6 +459,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
           }}
         />
       </div>
+      {draftHint ? <p className="mb-2 text-[11px] text-fg-dim">{draftHint}</p> : null}
 
       {/* 导出结果提示 */}
       {exportJob && exportJob.status !== "running" && exportJob.status !== "submitting" && (
@@ -593,6 +612,24 @@ function TimelineEditor({ projectId }: { projectId: string }) {
           onSelect={(a) => {
             addAssetClip(a);
             setPicking(false);
+          }}
+        />
+      )}
+      {pickingBgm && (
+        <AssetPickerModal
+          accept={["audio"]}
+          onClose={() => setPickingBgm(false)}
+          onSelect={async (a) => {
+            setPickingBgm(false);
+            try {
+              const r = await apiJson<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}/bgm`, "post", {
+                assetId: a.id,
+              });
+              setDoc(r.doc);
+              setSaveState("saved");
+            } catch (e) {
+              setTtsError(e instanceof Error ? e.message : String(e));
+            }
           }}
         />
       )}

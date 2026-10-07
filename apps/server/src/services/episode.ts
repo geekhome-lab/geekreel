@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { emptyTimelineDoc, extFromMime, type DramaBible, type DramaShot } from "@vw/core";
+import { emptyTimelineDoc, extFromFileName, extFromMime, layBgm, mimeFromExt, type DramaBible, type DramaShot } from "@vw/core";
 import { detectBins, probe, videoThumbnail } from "@vw/media";
 import { getAdapter } from "@vw/models";
-import { lockCastIntoPrompt, pickCastImageIds, shotDurationSec } from "@vw/pipeline";
+import { lockProductionIntoPrompt, pickShotRefImages, primaryEntityImage, shotDurationSec } from "@vw/pipeline";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { now } from "../lib/resp";
@@ -30,7 +30,14 @@ function imageBytes(assetId: string | null | undefined): { mime: string; data: U
   if (!assetId) return undefined;
   const row = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(assetId) as { path: string } | null;
   if (!row) return undefined;
-  return { mime: "image/png", data: new Uint8Array(readFileSync(absInLibrary(row.path))) };
+  return { mime: mimeFromExt(extFromFileName(row.path) || "png"), data: new Uint8Array(readFileSync(absInLibrary(row.path))) };
+}
+
+function audioBytes(assetId: string | null | undefined): { mime: string; data: Uint8Array } | undefined {
+  if (!assetId) return undefined;
+  const row = db.query("SELECT path FROM assets WHERE id = ? AND type = 'audio'").get(assetId) as { path: string } | null;
+  if (!row) return undefined;
+  return { mime: mimeFromExt(extFromFileName(row.path) || "mp3"), data: new Uint8Array(readFileSync(absInLibrary(row.path))) };
 }
 
 export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
@@ -62,7 +69,6 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
   }
 
   const bins = await detectBins();
-  const cast = bible.cast ?? [];
   const doc = emptyTimelineDoc({ portrait: true });
   const vTrack = doc.tracks.find((t) => t.type === "video")!;
   const aTrack = doc.tracks.find((t) => t.type === "audio")!;
@@ -80,15 +86,20 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
     const durMs = durSec * 1000;
     ctx.progress(0.08 + (i / ep.shots.length) * 0.8, `第 ${i + 1}/${ep.shots.length} 镜`);
 
-    const hay = [shot.visual, shot.line, shot.imagePrompt].join(" ");
-    const prompt = lockCastIntoPrompt({
+    const prompt = lockProductionIntoPrompt({
       prompt: shot.imagePrompt || shot.visual,
-      cast,
+      bible,
+      entityIds: shot.entityIds,
       lastFrame: lastFrameDesc || null,
       dialogue: shot.line || null,
     });
-    const refIds = pickCastImageIds(cast, hay);
-    const startImage = imageBytes(lastFrameId) ?? imageBytes(refIds[0]);
+    const refIds = pickShotRefImages(bible, shot.entityIds, lastFrameId ? [lastFrameId] : []);
+    const faceId =
+      (bible.cast ?? [])
+        .filter((c) => !shot.entityIds?.length || shot.entityIds.includes(c.id))
+        .map((c) => primaryEntityImage(c))
+        .find(Boolean) ?? refIds[0];
+    const startImage = imageBytes(faceId) ?? imageBytes(lastFrameId) ?? imageBytes(refIds[0]);
 
     let imageAssetId: string | null = lastFrameId ?? refIds[0] ?? null;
     let videoAssetId: string | null = null;
@@ -144,7 +155,6 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
           videoSec: result.durationSec ?? durSec,
         });
         videoAssetId = asset.id;
-        lipSynced = Boolean(shot.line) && videoEp.adapterType === "openai-compatible";
         if (bins.ffmpeg && bins.ffprobe) {
           const abs = absInLibrary(asset.path);
           const info = await probe(bins.ffprobe, abs);
@@ -169,13 +179,69 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       }
     }
 
-    if (shot.line.trim() && !lipSynced) {
-      lipsMissed += 1;
-      lipsNote = "这镜没对上嘴，先用定妆加配音。时间线里可再对一下。";
-    }
     if (shot.line.trim()) {
       const spoken = await speakOne(shot.line, { projectId, endpoint: ttsEp, signal: ctx.signal });
       if (spoken) audioAssetId = spoken.assetId;
+    }
+
+    if (shot.line.trim() && audioAssetId && (videoAd?.lipSync || videoAd?.generateVideo) && videoEp) {
+      const still = imageBytes(imageAssetId) ?? startImage;
+      const voice = audioBytes(audioAssetId);
+      if (still && voice) {
+        try {
+          ctx.progress(0.08 + ((i + 0.7) / ep.shots.length) * 0.8, `第 ${i + 1} 镜对口型`);
+          const lip = videoAd.lipSync
+            ? await videoAd.lipSync(videoEp.config, {
+                image: still,
+                audio: voice,
+                text: shot.line,
+                durationSec: durSec,
+                signal: ctx.signal,
+              })
+            : await videoAd.generateVideo!(videoEp.config, {
+                prompt: `${prompt}\n这是对口型那一道：嘴必须对上台词。`,
+                durationSec: durSec,
+                image: still,
+                dialogue: shot.line,
+                audio: true,
+                voice,
+                signal: ctx.signal,
+              });
+          const asset = storeAsset({
+            type: "video",
+            title: `${bible.title} E${ep.index}-${i + 1}对口型`,
+            ext: extFromMime(lip.mime, "mp4"),
+            source: "pipeline",
+            projectId,
+            data: lip.data,
+          });
+          recordUsage({
+            endpoint: videoEp,
+            projectId,
+            jobType: "pipeline.lipsync",
+            videoSec: lip.durationSec ?? durSec,
+          });
+          videoAssetId = asset.id;
+          lipSynced = true;
+          lipsNote = null;
+        } catch (e) {
+          lipsMissed += 1;
+          const reason = e instanceof Error ? e.message : String(e);
+          lipsNote = videoAssetId
+            ? `对口型没对上：${reason}。成片仍用原视频，没有改成静帧。`
+            : `对口型没对上：${reason}。只有定妆图，嘴没动。`;
+        }
+      } else {
+        lipsMissed += 1;
+        lipsNote = videoAssetId
+          ? "对口型缺定妆或配音，原视频没改成静帧。"
+          : "有台词但缺定妆或配音，嘴没动。";
+      }
+    } else if (shot.line.trim() && !lipSynced) {
+      lipsMissed += 1;
+      lipsNote = videoAssetId
+        ? "有台词。视频模型不会对口型，原视频保留，配音另铺。"
+        : "有台词但对口型没跑成。没有用静帧冒充说话。";
     }
 
     if (!videoAssetId && !imageAssetId) {
@@ -257,10 +323,18 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       proj.seriesId,
     ]);
   }
+  const withMusic = bible.bgmAssetId ? layBgm(doc, bible.bgmAssetId) : doc;
   mkdirSync(join(directory, "timeline"), { recursive: true });
-  writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(doc, null, 2));
+  writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(withMusic, null, 2));
 
-  ctx.progress(1, lipsMissed ? `${lipsMissed} 镜已配音，时间线可微调` : "这一集已装上时间线，已配音");
+  ctx.progress(
+    1,
+    lipsMissed
+      ? `${lipsMissed} 镜对口型没过，原视频还在，没有改成静帧`
+      : bible.bgmAssetId
+        ? "这一集已装上时间线，对口型和配乐都铺了"
+        : "这一集已装上时间线，对口型过了",
+  );
   return {
     projectId,
     episodeIndex: ep.index,

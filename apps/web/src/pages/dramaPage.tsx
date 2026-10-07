@@ -425,8 +425,17 @@ function CastReview(props: {
               onClick={() => props.onEdit("character", c.id)}
             >
               <div className="flex gap-3">
-                {c.imageAssetId ? (
-                  <img src={`/api/assets/${c.imageAssetId}/file?variant=thumb`} alt="" className="h-16 w-12 shrink-0 rounded-lg object-cover" />
+                {c.imageAssetId || c.views?.[0]?.assetId ? (
+                  <div className="flex shrink-0 gap-0.5">
+                    {(c.views?.length ? c.views : [{ kind: "front" as const, assetId: c.imageAssetId! }]).map((v) => (
+                      <img
+                        key={v.kind}
+                        src={`/api/assets/${v.assetId}/file?variant=thumb`}
+                        alt=""
+                        className="h-16 w-10 rounded-lg object-cover"
+                      />
+                    ))}
+                  </div>
                 ) : (
                   <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-[10px] text-fg-faint">点开改</div>
                 )}
@@ -442,6 +451,26 @@ function CastReview(props: {
           ))}
         </div>
       </section>
+      {(props.bible.assets ?? []).some((a) => a.kind !== "character") ? (
+        <section>
+          <h3 className="mb-2 text-xs text-fg-faint">场景和道具（跨集沿用）</h3>
+          <div className="flex flex-wrap gap-2">
+            {(props.bible.assets ?? [])
+              .filter((a) => a.kind !== "character")
+              .map((a) => (
+                <div key={a.id} className="flex items-center gap-2 rounded-xl border border-line bg-panel px-2 py-1.5">
+                  {a.imageAssetId ? (
+                    <img src={`/api/assets/${a.imageAssetId}/file?variant=thumb`} alt="" className="h-10 w-10 rounded object-cover" />
+                  ) : null}
+                  <div>
+                    <div className="text-xs">{a.name}</div>
+                    <div className="text-[10px] text-fg-faint">{a.kind === "prop" ? "道具" : "场景"}</div>
+                  </div>
+                </div>
+              ))}
+          </div>
+        </section>
+      ) : null}
       <section>
         <h3 className="mb-2 text-xs text-fg-faint">事件清单</h3>
         <div className="space-y-3">

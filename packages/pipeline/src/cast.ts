@@ -36,10 +36,11 @@ export function dossierPrompt(c: CharacterDossier): string {
 
 export function novelCastPrompt(story: string): string {
   return `通读下面的小说，输出 JSON：
-{"title":"剧名","summary":"一两句故事","palette":{"note":"从正文气氛归纳的色调","colors":[{"name":"色名","hex":"#RRGGBB","role":"主/辅/点缀/底"}]},"cast":[{"id":"C01","name":"人名","identity":"身份","personality":"性格","appearance":"外貌","outfit":"穿搭","prompt":"可直接文生图的全身设定"}],"events":[{"id":"E01","chapter":"第几章或段落名","index":1,"title":"事件名","summary":"发生了什么","characters":["C01"]}]}
+{"title":"剧名","summary":"一两句故事","palette":{"note":"从正文气氛归纳的色调","colors":[{"name":"色名","hex":"#RRGGBB","role":"主/辅/点缀/底"}]},"cast":[{"id":"C01","name":"人名","identity":"身份","personality":"性格","appearance":"外貌","outfit":"穿搭","prompt":"可直接文生图的全身设定"}],"assets":[{"id":"S01","kind":"scene","name":"景名","prompt":"空镜设定"},{"id":"P01","kind":"prop","name":"道具","prompt":"外形材质"}],"events":[{"id":"E01","chapter":"第几章或段落名","index":1,"title":"事件名","summary":"发生了什么","characters":["C01"]}]}
 
 规则：
 - 每个出场人物一份档案，外貌、性格、身份、穿搭都写清楚，依据正文，不要套现成画风名。
+- assets 里写反复出现的场景和道具，id 用 Sxx / Pxx。
 - 按原文自然章节或明显段落拆事件，每章至少 1 条关键事件，最多 30 条。
 - characters 填角色 id。
 
@@ -160,7 +161,15 @@ ${events || "按正文顺序"}
 ${story.trim().slice(0, 6000)}`;
 }
 
-export function parseCastDoc(text: string, fallbackStory: string): { title: string; summary: string; paletteNote: string; colors: DramaBible["palette"]["colors"]; cast: CharacterDossier[]; events: StoryEvent[] } {
+export function parseCastDoc(text: string, fallbackStory: string): {
+  title: string;
+  summary: string;
+  paletteNote: string;
+  colors: DramaBible["palette"]["colors"];
+  cast: CharacterDossier[];
+  events: StoryEvent[];
+  extras: DramaAssetItem[];
+} {
   const json = extractJson(text);
   const r = (json ?? {}) as Record<string, unknown>;
   const title = String(r.title ?? "").trim() || guessTitle(fallbackStory);
@@ -176,6 +185,9 @@ export function parseCastDoc(text: string, fallbackStory: string): { title: stri
     : [];
   const cast = (Array.isArray(r.cast) ? r.cast : []).map((raw, i) => normalizeCast(raw, i)).filter((c) => c.name);
   const events = (Array.isArray(r.events) ? r.events : []).map((raw, i) => normalizeEvent(raw, i)).filter((e) => e.title || e.summary);
+  const extras = (Array.isArray(r.assets) ? r.assets : [])
+    .map((raw, i) => normalizeExtra(raw, i))
+    .filter((a) => a.name && a.kind !== "character");
   return {
     title,
     summary,
@@ -183,6 +195,7 @@ export function parseCastDoc(text: string, fallbackStory: string): { title: stri
     colors,
     cast: cast.length ? cast : fallbackCast(fallbackStory),
     events: events.length ? events.slice(0, 30) : fallbackEvents(fallbackStory),
+    extras,
   };
 }
 
@@ -206,13 +219,17 @@ export function parseOneEvent(text: string, fallback: StoryEvent): StoryEvent {
   return { ...fallback, ...next, id: fallback.id, index: fallback.index };
 }
 
-export function assetsFromCast(cast: CharacterDossier[]): DramaAssetItem[] {
-  return cast.map((c) => ({
+export function assetsFromCast(cast: CharacterDossier[], extras: DramaAssetItem[] = []): DramaAssetItem[] {
+  const fromCast: DramaAssetItem[] = cast.map((c) => ({
     id: c.id,
     kind: "character" as const,
     name: c.name,
     prompt: c.prompt || dossierPrompt(c),
+    imageAssetId: c.imageAssetId ?? null,
+    views: c.views,
   }));
+  const seen = new Set(fromCast.map((a) => a.id));
+  return [...fromCast, ...extras.filter((a) => a.id && !seen.has(a.id))];
 }
 
 export function castFromAssets(assets: DramaAssetItem[]): CharacterDossier[] {
@@ -226,8 +243,21 @@ export function castFromAssets(assets: DramaAssetItem[]): CharacterDossier[] {
       appearance: a.prompt,
       outfit: "",
       prompt: a.prompt,
-      imageAssetId: null,
+      imageAssetId: a.imageAssetId ?? null,
+      views: a.views,
     }));
+}
+
+function normalizeExtra(raw: unknown, i: number): DramaAssetItem {
+  const x = (raw ?? {}) as Record<string, unknown>;
+  const kind = x.kind === "prop" ? "prop" : "scene";
+  const prefix = kind === "prop" ? "P" : "S";
+  return {
+    id: String(x.id ?? "").trim() || `${prefix}${String(i + 1).padStart(2, "0")}`,
+    kind,
+    name: String(x.name ?? "").trim(),
+    prompt: String(x.prompt ?? "").trim() || String(x.name ?? "").trim(),
+  };
 }
 
 function normalizeCast(raw: unknown, i: number): CharacterDossier {
