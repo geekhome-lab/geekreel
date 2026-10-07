@@ -155,7 +155,7 @@ ${cast || "无"}
 ${events || "按正文顺序"}
 
 输出 JSON：
-{"title":"${bible.title}","palette":{"note":"","colors":[]},"assets":[],"episodes":[{"index":1,"title":"集标题","synopsis":"本集一事","narrator":"旁白","lastFrame":"尾帧","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图，必须写清人物外貌穿搭"}]}]}
+{"title":"${bible.title}","palette":{"note":"","colors":[]},"assets":[],"episodes":[{"index":1,"title":"集标题","synopsis":"本集一事","narrator":"旁白","lastFrame":"尾帧","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图，必须写清人物外貌穿搭","shotSize":"cu|ms|fs|ls","cameraMove":"static|push|pull|pan|follow","angle":"eye|high|low|over"}]}]}
 
 原文摘录：
 ${story.trim().slice(0, 6000)}`;
@@ -227,6 +227,7 @@ export function assetsFromCast(cast: CharacterDossier[], extras: DramaAssetItem[
     prompt: c.prompt || dossierPrompt(c),
     imageAssetId: c.imageAssetId ?? null,
     views: c.views,
+    libraryAssetId: c.libraryAssetId,
   }));
   const seen = new Set(fromCast.map((a) => a.id));
   return [...fromCast, ...extras.filter((a) => a.id && !seen.has(a.id))];
@@ -245,6 +246,7 @@ export function castFromAssets(assets: DramaAssetItem[]): CharacterDossier[] {
       prompt: a.prompt,
       imageAssetId: a.imageAssetId ?? null,
       views: a.views,
+      libraryAssetId: a.libraryAssetId,
     }));
 }
 

@@ -1,5 +1,15 @@
+import { timelineDuration } from "@vw/core";
 import { expect, test } from "bun:test";
-import { buildFinishTimeline, cuesFromScenes, extractDialogue, fitCuesToClips, spokenLine, splitSpokenCues, wrapSubtitle } from "./dialogue";
+import {
+  buildFinishTimeline,
+  clipSpokenText,
+  cuesFromScenes,
+  extractDialogue,
+  fitCuesToClips,
+  spokenLine,
+  splitSpokenCues,
+  wrapSubtitle,
+} from "./dialogue";
 
 test("抽出角色冒号后的台词，丢掉风格锁", () => {
   const text = [
@@ -64,7 +74,7 @@ test("长旁白拆成短字幕，不整篇糊在一格", () => {
   expect(wrapSubtitle("一个少年蹲在草席后面，卖鞋为生过日子")).toContain("\n");
 });
 
-test("两条片子八场戏，字幕按时长铺满", () => {
+test("两条片子按剧本时间窗口配词，不把后面的场次塞进前面的短片", () => {
   const scenes = [
     { heading: "一", action: "", lines: [{ id: "a", speaker: "旁白", text: "他卖鞋为生。" }], startSec: 0, endSec: 10 },
     { heading: "二", action: "", lines: [{ id: "b", speaker: "旁白", text: "三人结义。" }], startSec: 10, endSec: 20 },
@@ -77,8 +87,43 @@ test("两条片子八场戏，字幕按时长铺满", () => {
     ],
     scenes,
   );
-  expect(fitted[0]!.cues?.some((c) => c.text.includes("卖鞋"))).toBe(true);
-  expect(fitted[1]!.cues?.some((c) => c.text.includes("茅庐"))).toBe(true);
+  expect(fitted[0]!.line).toContain("卖鞋");
+  expect(fitted[0]!.line).not.toContain("茅庐");
+  expect(fitted[1]!.line).toContain("结义");
+  expect(fitted[1]!.line).not.toContain("茅庐");
+});
+
+test("5秒片子只配画面窗口里的词，不念整份30秒剧本", () => {
+  const scenes = [
+    { heading: "一", action: "", lines: [{ id: "a", speaker: "旁白", text: "只剩一块八毛七。" }], startSec: 0, endSec: 8 },
+    { heading: "二", action: "", lines: [{ id: "b", speaker: "旁白", text: "吉姆还没有礼物，德拉剪掉长发去卖。" }], startSec: 8, endSec: 22 },
+    { heading: "三", action: "", lines: [{ id: "c", speaker: "旁白", text: "两人交换了圣诞礼物。" }], startSec: 22, endSec: 30 },
+  ];
+  const fitted = fitCuesToClips([{ videoAssetId: "v1", durationMs: 5000, line: "只剩一块八毛七。" }], scenes);
+  expect(fitted[0]!.line).toContain("一块八毛七");
+  expect(fitted[0]!.line).not.toContain("圣诞礼物");
+  expect(fitted[0]!.line).not.toContain("剪掉长发");
+  expect(clipSpokenText(scenes.map((s) => s.lines[0]!.text).join(""), 5000).length).toBeLessThan(40);
+});
+
+test("成片几乎覆盖剧本时长才把词铺满", () => {
+  const scenes = [
+    { heading: "一", action: "", lines: [{ id: "a", speaker: "旁白", text: "他卖鞋为生。" }], startSec: 0, endSec: 10 },
+    { heading: "二", action: "", lines: [{ id: "b", speaker: "旁白", text: "三人结义。" }], startSec: 10, endSec: 20 },
+    { heading: "三", action: "", lines: [{ id: "c", speaker: "旁白", text: "三顾茅庐。" }], startSec: 20, endSec: 30 },
+  ];
+  const fitted = fitCuesToClips([{ videoAssetId: "v1", durationMs: 28_000, line: "" }], scenes);
+  expect(fitted[0]!.line).toContain("卖鞋");
+  expect(fitted[0]!.line).toContain("茅庐");
+});
+
+test("配音比画面长也不把时间线拉长", () => {
+  const doc = buildFinishTimeline([{ videoAssetId: "v1", durationMs: 5000, line: "只剩一块八毛七" }], {
+    withSubtitles: true,
+    dubbed: [{ assetId: "a1", durationMs: 30_000 }],
+  });
+  expect(timelineDuration(doc)).toBeLessThanOrEqual(5000);
+  expect(doc.tracks.find((t) => t.type === "audio")!.clips[0]!.outMs).toBe(5000);
 });
 
 test("一场戏一条时间，一句一条字幕", () => {

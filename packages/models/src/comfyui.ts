@@ -155,6 +155,7 @@ export function injectComfyPrompt(
     height?: number;
     imageName?: string;
     lastFrameName?: string;
+    refNames?: string[];
     durationSec?: number;
   },
 ): ComfyPrompt {
@@ -193,6 +194,12 @@ export function injectComfyPrompt(
   const loaders = Object.entries(next).filter(([, n]) => n.class_type === "LoadImage");
   if (input.imageName && loaders[0]?.[1].inputs) loaders[0][1].inputs.image = input.imageName;
   if (input.lastFrameName && loaders[1]?.[1].inputs) loaders[1][1].inputs.image = input.lastFrameName;
+  const extra = input.refNames ?? [];
+  const start = input.imageName || input.lastFrameName ? 2 : 0;
+  for (let i = 0; i < extra.length; i++) {
+    const loader = loaders[start + i]?.[1];
+    if (loader?.inputs && extra[i]) loader.inputs.image = extra[i];
+  }
 
   return next;
 }
@@ -328,6 +335,7 @@ async function runWorkflow(
     signal?: AbortSignal;
     image?: { mime: string; data: Uint8Array };
     lastFrame?: { mime: string; data: Uint8Array };
+    refs?: Array<{ mime: string; data: Uint8Array }>;
     durationSec?: number;
     prefer: "image" | "video";
   },
@@ -343,8 +351,13 @@ async function runWorkflow(
   const size = parseSize(req.size);
   let imageName: string | undefined;
   let lastFrameName: string | undefined;
+  const refNames: string[] = [];
   if (req.image) imageName = await uploadImage(config, req.image, "geekreel-ref", req.signal);
   if (req.lastFrame) lastFrameName = await uploadImage(config, req.lastFrame, "geekreel-tail", req.signal);
+  for (let i = 0; i < (req.refs ?? []).length; i++) {
+    const img = req.refs![i]!;
+    refNames.push(await uploadImage(config, img, `geekreel-sub-${i}`, req.signal));
+  }
   prompt = injectComfyPrompt(prompt, {
     text: req.prompt,
     model: config.model,
@@ -352,6 +365,7 @@ async function runWorkflow(
     height: size?.height,
     imageName,
     lastFrameName,
+    refNames,
     durationSec: req.durationSec,
   });
 

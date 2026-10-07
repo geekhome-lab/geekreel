@@ -179,9 +179,9 @@ export function VoicePicker(props: {
             props.onDub(picked, current.endpointId);
           }}
         >
-          {props.busy ? "配音中…" : canDub ? `用「${pickedName}」配音` : current.endpointId ? "先点一个音色" : `先接入${current.name}`}
+          {props.busy ? "配音并对口型…" : canDub ? `用「${pickedName}」配音并对口型` : current.endpointId ? "先点一个音色" : `先接入${current.name}`}
         </button>
-        <span className="text-[11px] text-fg-faint">先试听，再配整条时间线。字幕已经可以先铺上。</span>
+        <span className="text-[11px] text-fg-faint">对白镜：先出语音再改嘴。旁白镜：只铺声。</span>
       </div>
     </div>
   );

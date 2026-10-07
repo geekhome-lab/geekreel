@@ -4,6 +4,7 @@
  */
 
 import { createHmac } from "node:crypto";
+import { collectVideoImages } from "./blobs";
 import type { ModelAdapter, TestResult } from "./index";
 
 export function jwtHs256(payload: Record<string, unknown>, secret: string): string {
@@ -88,7 +89,9 @@ export const kling: ModelAdapter = {
     const token = klingAuth(config);
     const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
     const base = config.baseUrl || "https://api.klingai.com";
-    const imageB64 = req.image ? Buffer.from(req.image.data).toString("base64") : "";
+    const refs = collectVideoImages(req);
+    const imageB64 = refs[0] ? Buffer.from(refs[0].data).toString("base64") : "";
+    const tail = req.lastFrame ?? (refs.length > 1 ? refs[refs.length - 1] : undefined);
     const path = imageB64 ? "/v1/videos/image2video" : "/v1/videos/text2video";
     const create = await fetch(joinUrl(base, path), {
       method: "POST",
@@ -98,7 +101,10 @@ export const kling: ModelAdapter = {
         prompt: req.prompt,
         duration: String(req.durationSec || 5),
         ...(imageB64 ? { image: imageB64 } : {}),
-        ...(req.lastFrame ? { image_tail: Buffer.from(req.lastFrame.data).toString("base64") } : {}),
+        ...(tail && tail !== refs[0] ? { image_tail: Buffer.from(tail.data).toString("base64") } : {}),
+        ...(/kling-v[23]|kling-3|omni/i.test(config.model || "") && refs.length > 1
+          ? { image_list: refs.slice(0, 6).map((r) => Buffer.from(r.data).toString("base64")) }
+          : {}),
       }),
       signal: req.signal ?? null,
     });
@@ -130,6 +136,71 @@ export const kling: ModelAdapter = {
       }
     }
     throw new Error("可灵超时。到可灵控制台看任务，或换一个更短的时长。");
+  },
+
+  async lipSync(config, req) {
+    const token = klingAuth(config);
+    const headers = { "Content-Type": "application/json", Authorization: `Bearer ${token}` };
+    const base = config.baseUrl || "https://api.klingai.com";
+    const audioB64 = Buffer.from(req.audio.data).toString("base64");
+    if (req.video?.data?.length && req.video.data.length <= 20 * 1024 * 1024 && req.audio.data.length <= 5 * 1024 * 1024) {
+      const videoB64 = Buffer.from(req.video.data).toString("base64");
+      const create = await fetch(joinUrl(base, "/v1/videos/lip-sync"), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          input: {
+            mode: "audio2video",
+            video_url: `data:${req.video.mime || "video/mp4"};base64,${videoB64}`,
+            audio_type: "file",
+            audio_file: audioB64,
+          },
+        }),
+        signal: req.signal ?? null,
+      });
+      if (create.ok) {
+        const json = (await create.json()) as { data?: { task_id?: string }; task_id?: string };
+        const taskId = json.data?.task_id ?? json.task_id;
+        if (taskId) {
+          for (let i = 0; i < 90; i++) {
+            await sleep(5000, req.signal);
+            const poll = await fetch(joinUrl(base, `/v1/videos/lip-sync/${taskId}`), {
+              headers,
+              signal: req.signal ?? null,
+            });
+            if (!poll.ok) throw new Error(await readError(poll));
+            const row = (await poll.json()) as {
+              data?: {
+                task_status?: string;
+                task_status_msg?: string;
+                task_result?: { videos?: Array<{ url?: string }> };
+              };
+            };
+            const status = row.data?.task_status;
+            if (status === "failed") throw new Error(row.data?.task_status_msg || "可灵对口型失败");
+            if (status === "succeed" || status === "succeeded") {
+              const url = row.data?.task_result?.videos?.[0]?.url;
+              if (!url) throw new Error("可灵对口型完成了但没有视频");
+              return { data: await downloadBytes(url, undefined, req.signal), mime: "video/mp4", durationSec: req.durationSec };
+            }
+          }
+          throw new Error("可灵对口型超时");
+        }
+      }
+    }
+    if (!req.image) throw new Error("对口型需要成片或一张有脸的静帧");
+    const prompt = req.text?.trim()
+      ? `角色对着镜头说：「${req.text.trim()}」。嘴型必须对上这句，能出声就一起出声。`
+      : "对着镜头说话，嘴型对齐配音。";
+    return this.generateVideo!(config, {
+      prompt,
+      durationSec: req.durationSec,
+      image: req.image,
+      dialogue: req.text,
+      audio: true,
+      voice: req.audio,
+      signal: req.signal,
+    });
   },
 };
 
@@ -172,12 +243,10 @@ export const doubaoSeedance: ModelAdapter = {
         model: config.model,
         content: [
           { type: "text", text: req.prompt },
-          ...(req.image
-            ? [{ type: "image_url", image_url: { url: `data:${req.image.mime || "image/png"};base64,${Buffer.from(req.image.data).toString("base64")}` } }]
-            : []),
-          ...(req.lastFrame
-            ? [{ type: "image_url", image_url: { url: `data:${req.lastFrame.mime || "image/png"};base64,${Buffer.from(req.lastFrame.data).toString("base64")}` } }]
-            : []),
+          ...collectVideoImages(req).map((img) => ({
+            type: "image_url",
+            image_url: { url: `data:${img.mime || "image/png"};base64,${Buffer.from(img.data).toString("base64")}` },
+          })),
         ],
         duration: req.durationSec || 5,
       }),

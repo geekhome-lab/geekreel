@@ -15,7 +15,7 @@ import { injectImagePrompt, type LoadedPack } from "@vw/style";
 import {
   lockProductionIntoPrompt,
   assetsFromCast,
-  bindEntitiesToShots,
+  finishBible,
   bibleFromCastPrompt,
   bibleFromWhiteboard,
   CAST_REVISE_SYSTEM,
@@ -140,6 +140,7 @@ function writeCanvas(projectId: string, dir: string, bible: DramaBible, imageEnd
         entityIds: shot.entityIds,
         lastFrame: prev?.visual ?? null,
         dialogue: shot.line || null,
+        shot,
       });
       const talking = Boolean(shot.line?.trim());
       nodes.push(
@@ -542,7 +543,10 @@ function readWaitingState(id: string): {
 
 function persistBible(row: PipeRow, bible: DramaBible, story: string, input: Record<string, unknown>) {
   const project = db.query("SELECT directory FROM projects WHERE id = ?").get(row.projectId) as { directory: string } | null;
-  if (project) writeFileSync(join(project.directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
+  if (project) {
+    mkdirSync(join(project.directory, "pipeline"), { recursive: true });
+    writeFileSync(join(project.directory, "pipeline/bible.json"), JSON.stringify(bible, null, 2));
+  }
   db.run("UPDATE pipelines SET stateJson = ?, updatedAt = ? WHERE id = ?", [
     JSON.stringify({ bible, story, input }),
     now(),
@@ -721,7 +725,41 @@ async function fillBibleFromCast(opts: {
       }),
     };
   }
-  return bindEntitiesToShots({ ...bible, bgmAssetId: opts.bible.bgmAssetId ?? null });
+  return finishBible({
+    ...bible,
+    bgmAssetId: opts.bible.bgmAssetId ?? null,
+    ambienceAssetId: opts.bible.ambienceAssetId ?? null,
+  });
+}
+
+export function bindPipelineEntity(
+  id: string,
+  opts: { entityId: string; assetId: string; view?: "face" | "front" | "side" | "full" },
+): DramaBible {
+  const row = db.query("SELECT * FROM pipelines WHERE id = ?").get(id) as PipeRow | null;
+  if (!row) throw new Error("流水线不存在");
+  let state: { bible?: DramaBible; story?: string; input?: Record<string, unknown> };
+  try {
+    state = JSON.parse(row.stateJson) as typeof state;
+  } catch {
+    throw new Error("流水线状态坏了");
+  }
+  if (!state.bible) throw new Error("还没有人物档案");
+  const bible = state.bible;
+  const view = opts.view ?? "front";
+  const nextCast = (bible.cast ?? []).map((c) => {
+    if (c.id !== opts.entityId) return c;
+    const views = [...(c.views ?? []).filter((v) => v.kind !== view), { kind: view, assetId: opts.assetId }];
+    return { ...c, libraryAssetId: opts.assetId, imageAssetId: opts.assetId, views };
+  });
+  const nextAssets = (bible.assets ?? []).map((a) => {
+    if (a.id !== opts.entityId) return a;
+    const views = [...(a.views ?? []).filter((v) => v.kind !== view), { kind: view, assetId: opts.assetId }];
+    return { ...a, libraryAssetId: opts.assetId, imageAssetId: opts.assetId, views };
+  });
+  const next = { ...bible, cast: nextCast, assets: nextAssets };
+  persistBible(row, next, state.story ?? "", state.input ?? {});
+  return next;
 }
 
 export function retryPipelineBible(id: string) {

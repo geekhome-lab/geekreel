@@ -79,6 +79,8 @@ export interface DramaAssetItem {
   prompt: string;
   imageAssetId?: string | null;
   views?: EntityView[];
+  /** 资产库里钉住的那张，跨集跨项目沿用 */
+  libraryAssetId?: string | null;
 }
 
 /** 通读全文后的角色档案，不是点选风格包 */
@@ -92,6 +94,7 @@ export interface CharacterDossier {
   prompt: string;
   imageAssetId?: string | null;
   views?: EntityView[];
+  libraryAssetId?: string | null;
 }
 
 export interface StoryEvent {
@@ -101,6 +104,43 @@ export interface StoryEvent {
   title: string;
   summary: string;
   characters: string[];
+}
+
+export type ShotSize = "ecu" | "cu" | "ms" | "fs" | "ls" | "els";
+export type CameraMove = "static" | "push" | "pull" | "pan" | "tilt" | "follow" | "orbit";
+export type CameraAngle = "eye" | "high" | "low" | "over";
+
+export const shotSizeLabels: Record<ShotSize, string> = {
+  ecu: "大特写",
+  cu: "特写",
+  ms: "中景",
+  fs: "全景",
+  ls: "远景",
+  els: "大远景",
+};
+
+export const cameraMoveLabels: Record<CameraMove, string> = {
+  static: "固定",
+  push: "推进",
+  pull: "拉远",
+  pan: "横摇",
+  tilt: "俯仰",
+  follow: "跟随",
+  orbit: "环绕",
+};
+
+export const cameraAngleLabels: Record<CameraAngle, string> = {
+  eye: "平视",
+  high: "俯拍",
+  low: "仰拍",
+  over: "过肩",
+};
+
+export interface ShotQa {
+  ok: boolean;
+  score: number;
+  note: string;
+  retries: number;
 }
 
 export interface DramaShot {
@@ -114,6 +154,12 @@ export interface DramaShot {
   audioAssetId?: string | null;
   /** 这一镜必须引用的角色 / 场景 / 道具 id */
   entityIds?: string[];
+  shotSize?: ShotSize;
+  cameraMove?: CameraMove;
+  angle?: CameraAngle;
+  /** 这一镜该落的音效关键字，用来对资产库 */
+  sfxCue?: string | null;
+  qa?: ShotQa | null;
   /** 对口型那道过了才是 true。失败时仍保留原视频，不改成静帧。 */
   lipSynced?: boolean;
   lipsNote?: string | null;
@@ -139,6 +185,8 @@ export interface DramaBible {
   events?: StoryEvent[];
   /** 整部沿用的配乐，出集时铺到时间线 */
   bgmAssetId?: string | null;
+  /** 整部沿用的环境底，音量比配乐更低 */
+  ambienceAssetId?: string | null;
 }
 
 export interface PipelineRun {

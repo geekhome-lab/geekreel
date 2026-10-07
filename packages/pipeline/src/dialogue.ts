@@ -1,4 +1,4 @@
-import { clipDuration, emptyTimelineDoc, extractDialogue, spokenLine, type ScriptScene, type TimelineDoc } from "@vw/core";
+import { emptyTimelineDoc, extractDialogue, spokenLine, type ScriptScene, type TimelineDoc } from "@vw/core";
 
 export { extractDialogue, spokenLine };
 
@@ -12,6 +12,10 @@ export interface FinishClip {
   videoAssetId: string;
   durationMs: number;
   line: string;
+  /** 这一镜自己的出片说明，配音以它和成片画面为准 */
+  visual?: string;
+  /** 画面上有人开口，要对嘴，不能只盖 TTS */
+  talking?: boolean;
   cues?: SubCue[];
 }
 
@@ -21,6 +25,85 @@ export interface DubbedClip {
 }
 
 const MAX_LINE = 12;
+/** 中文配音大约每秒五个字；多了 TTS 会把 5 秒片子念成半分钟。 */
+const SPEAK_CHARS_PER_SEC = 5;
+const ONE_TAKE_COVER = 0.7;
+
+type SceneCue = Pick<ScriptScene, "lines" | "heading" | "action" | "startSec" | "endSec">;
+
+function charCount(text: string): number {
+  return text.replace(/\s/g, "").length;
+}
+
+function scriptSpanMs(scenes: SceneCue[]): number {
+  if (!scenes.length) return 0;
+  const start = Math.min(...scenes.map((s) => s.startSec ?? 0));
+  const end = Math.max(...scenes.map((s) => s.endSec ?? s.startSec ?? 0));
+  return Math.max(0, (end - start) * 1000);
+}
+
+export function speakCharBudget(durationMs: number): number {
+  return Math.max(6, Math.round((Math.max(400, durationMs) / 1000) * SPEAK_CHARS_PER_SEC));
+}
+
+/** 按画面时长裁台词，避免 5 秒视频配出 30 秒旁白。 */
+export function clipSpokenText(text: string, durationMs: number): string {
+  const raw = text.replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  const budget = speakCharBudget(durationMs);
+  if (charCount(raw) <= budget) return raw;
+  const parts = raw
+    .split(/(?<=[。！？!?；;\n])/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const out: string[] = [];
+  let n = 0;
+  for (const part of parts) {
+    const len = charCount(part);
+    if (out.length && n + len > budget) break;
+    if (!out.length && len > budget) break;
+    out.push(part);
+    n += len;
+    if (n >= budget) break;
+  }
+  if (out.length) return out.join("");
+  let acc = "";
+  for (const ch of raw) {
+    if (/\s/.test(ch)) {
+      if (acc) acc += ch;
+      continue;
+    }
+    if (charCount(acc) >= budget) break;
+    acc += ch;
+  }
+  return acc.trim();
+}
+
+function scenesInWindow(scenes: SceneCue[], startSec: number, endSec: number): SceneCue[] {
+  return scenes.filter((s) => {
+    const a = s.startSec ?? 0;
+    const b = Math.max(a, s.endSec ?? a);
+    return a < endSec && b > startSec;
+  });
+}
+
+function fitLineToClip(clip: FinishClip): FinishClip {
+  const line = clipSpokenText(clip.line, clip.durationMs);
+  if (line === clip.line.trim() && clip.cues?.length) {
+    const cap = Math.max(400, clip.durationMs);
+    return {
+      ...clip,
+      line,
+      cues: clip.cues
+        .filter((c) => c.startMs < cap)
+        .map((c) => ({
+          ...c,
+          durationMs: Math.min(c.durationMs, Math.max(400, cap - c.startMs)),
+        })),
+    };
+  }
+  return { ...clip, line, cues: splitSpokenCues(line, clip.durationMs) };
+}
 
 /** 竖屏一行大约十四字，最多两行。 */
 export function wrapSubtitle(text: string, maxChars = MAX_LINE): string {
@@ -81,10 +164,7 @@ export function splitSpokenCues(text: string, durationMs: number): SubCue[] {
   });
 }
 
-export function cuesFromScenes(
-  scenes: Array<Pick<ScriptScene, "lines" | "heading" | "startSec" | "endSec">>,
-  durationMs: number,
-): SubCue[] {
+export function cuesFromScenes(scenes: SceneCue[], durationMs: number): SubCue[] {
   const items = scenes
     .map((s) => {
       const text = spokenLine(s).trim();
@@ -107,31 +187,40 @@ export function cuesFromScenes(
   return out;
 }
 
-/** 片子比场次少时，把整份剧本字幕按时长铺到现有视频上。 */
-export function fitCuesToClips(
-  clips: FinishClip[],
-  scenes: Array<Pick<ScriptScene, "lines" | "heading" | "startSec" | "endSec">>,
-): FinishClip[] {
-  if (!clips.length || scenes.length <= clips.length) return clips;
-  const total = clips.reduce((a, c) => a + Math.max(400, c.durationMs), 0);
-  const all = cuesFromScenes(scenes, total);
-  let offset = 0;
+/** 片子比场次少：只配画面时间窗口里的词。成片几乎覆盖整份剧本时才把词铺满。 */
+export function fitCuesToClips(clips: FinishClip[], scenes: SceneCue[]): FinishClip[] {
+  if (!clips.length) return clips;
+  if (scenes.length <= clips.length) return clips.map(fitLineToClip);
+  const totalVideo = clips.reduce((a, c) => a + Math.max(400, c.durationMs), 0);
+  const span = scriptSpanMs(scenes);
+  if (span > 0 && totalVideo >= span * ONE_TAKE_COVER) {
+    const all = cuesFromScenes(scenes, totalVideo);
+    let offset = 0;
+    return clips.map((clip) => {
+      const start = offset;
+      const end = offset + Math.max(400, clip.durationMs);
+      offset = end;
+      const cues = all
+        .filter((c) => c.startMs >= start && c.startMs < end)
+        .map((c) => ({
+          text: c.text,
+          startMs: c.startMs - start,
+          durationMs: Math.min(c.durationMs, Math.max(400, end - c.startMs)),
+        }));
+      return fitLineToClip({
+        ...clip,
+        line: cues.map((c) => c.text.replace(/\n/g, "")).join("\n") || clip.line,
+        cues,
+      });
+    });
+  }
+  let offsetSec = 0;
   return clips.map((clip) => {
-    const start = offset;
-    const end = offset + Math.max(400, clip.durationMs);
-    offset = end;
-    const cues = all
-      .filter((c) => c.startMs >= start && c.startMs < end)
-      .map((c) => ({
-        text: c.text,
-        startMs: c.startMs - start,
-        durationMs: Math.min(c.durationMs, Math.max(400, end - c.startMs)),
-      }));
-    return {
-      ...clip,
-      line: cues.map((c) => c.text.replace(/\n/g, "")).join("\n") || clip.line,
-      cues,
-    };
+    const durSec = Math.max(0.4, clip.durationMs / 1000);
+    const used = scenesInWindow(scenes, offsetSec, offsetSec + durSec);
+    offsetSec += durSec;
+    const line = clipSpokenText(used.map((s) => spokenLine(s)).filter(Boolean).join("\n") || clip.line, clip.durationMs);
+    return { ...clip, line, cues: splitSpokenCues(line, clip.durationMs) };
   });
 }
 
@@ -169,26 +258,26 @@ export function buildFinishTimeline(
         assetId: voice.assetId,
         startMs: cursor,
         inMs: 0,
-        outMs: Math.max(400, voice.durationMs || dur),
+        outMs: Math.min(dur, Math.max(400, voice.durationMs || dur)),
         volume: 1,
       });
     }
     if (withSubs) {
-      const window = Math.max(400, voice?.durationMs || dur);
-      const cues = (clip.cues?.length ? clip.cues : splitSpokenCues(clip.line, window)).filter((c) => c.text.trim());
+      const cues = (clip.cues?.length ? clip.cues : splitSpokenCues(clip.line, dur)).filter((c) => c.text.trim());
       cues.forEach((cue, j) => {
+        const start = Math.max(0, cue.startMs);
+        if (start >= dur) return;
         sTrack.clips.push({
           id: `c_s_${i}_${j}`,
           text: cue.text.trim(),
-          startMs: cursor + Math.max(0, cue.startMs),
+          startMs: cursor + start,
           inMs: 0,
-          outMs: Math.max(400, cue.durationMs),
+          outMs: Math.min(Math.max(400, cue.durationMs), dur - start),
           volume: 1,
         });
       });
     }
-    const audioEnd = voice ? cursor + clipDuration(aTrack.clips.at(-1)!) : cursor + dur;
-    cursor = Math.max(cursor + dur, audioEnd);
+    cursor += dur;
   });
   return doc;
 }

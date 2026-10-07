@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { CharacterDossier, DramaBible, Job, PipelineRun, Series, StoryEvent } from "@vw/core";
+import { cameraAngleLabels, cameraMoveLabels, shotSizeLabels } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { usePrefs } from "../lib/prefs";
 import { useAppStore } from "../lib/store";
 import { waitForJob } from "../lib/runGen";
 import { iconPlay, iconUpload } from "../lib/icons";
 import { Modal } from "../components/modal";
+import { AssetPickerModal } from "../components/canvas/assetPickerModal";
 
 type Source = "file" | "url" | "paste";
 type SeriesMode = "new" | "continue";
@@ -56,6 +58,7 @@ export function DramaPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<{ kind: "character" | "event"; id: string } | null>(null);
+  const [binding, setBinding] = useState<string | null>(null);
 
   const dramaSeries = (seriesList ?? []).filter((s) => s.kind === "drama" || s.kind === "free");
   const bible = pipe?.bible ?? null;
@@ -281,6 +284,7 @@ export function DramaPage() {
             bible={bible}
             locked={seriesMode === "continue"}
             onEdit={(kind, id) => setEditing({ kind, id })}
+            onBind={(id) => setBinding(id)}
           />
           <DramaChatBox
             placeholder="比如：全部改成中文 / 事件压成 8 条 / 人物用本名"
@@ -306,6 +310,8 @@ export function DramaPage() {
           />
         </>
       )}
+
+      {bible && (bible.episodes?.length ?? 0) > 0 ? <ShotBoard bible={bible} /> : null}
 
       {error && <p className="mb-3 text-xs text-amber-300">{error}</p>}
 
@@ -382,6 +388,27 @@ export function DramaPage() {
         </div>
       )}
 
+      {binding && bible && pipe && (
+        <AssetPickerModal
+          accept={["image"]}
+          onClose={() => setBinding(null)}
+          onSelect={async (a) => {
+            const entityId = binding;
+            setBinding(null);
+            try {
+              const next = await apiJson<DramaBible>(`/api/pipelines/${pipe.id}/bind-entity`, "post", {
+                entityId,
+                assetId: a.id,
+              });
+              qc.setQueryData(["pipeline", pipe.id], (old: PipelineRun | undefined) =>
+                old ? { ...old, bible: next } : old,
+              );
+            } catch (e) {
+              setError(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        />
+      )}
       {editing && bible && pipe && (
         <ReviseDialog
           kind={editing.kind}
@@ -405,6 +432,7 @@ function CastReview(props: {
   bible: DramaBible;
   locked: boolean;
   onEdit: (kind: "character" | "event", id: string) => void;
+  onBind: (id: string) => void;
 }) {
   const cast = props.bible.cast ?? [];
   const events = props.bible.events ?? [];
@@ -419,35 +447,39 @@ function CastReview(props: {
         <h3 className="mb-2 text-xs text-fg-faint">出场人物{props.locked ? "（沿用上集，仍可点开微调）" : ""}</h3>
         <div className="grid gap-2 sm:grid-cols-2">
           {cast.map((c) => (
-            <button
-              key={c.id}
-              className="rounded-xl border border-line bg-panel p-3 text-left hover:border-accent-dim"
-              onClick={() => props.onEdit("character", c.id)}
-            >
+            <div key={c.id} className="rounded-xl border border-line bg-panel p-3 text-left">
               <div className="flex gap-3">
-                {c.imageAssetId || c.views?.[0]?.assetId ? (
-                  <div className="flex shrink-0 gap-0.5">
-                    {(c.views?.length ? c.views : [{ kind: "front" as const, assetId: c.imageAssetId! }]).map((v) => (
+                <button className="flex shrink-0 gap-0.5" onClick={() => props.onEdit("character", c.id)}>
+                  {c.imageAssetId || c.views?.[0]?.assetId ? (
+                    (c.views?.length ? c.views : [{ kind: "front" as const, assetId: c.imageAssetId! }]).map((v) => (
                       <img
                         key={v.kind}
                         src={`/api/assets/${v.assetId}/file?variant=thumb`}
                         alt=""
                         className="h-16 w-10 rounded-lg object-cover"
                       />
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex h-16 w-12 shrink-0 items-center justify-center rounded-lg bg-panel-2 text-[10px] text-fg-faint">点开改</div>
-                )}
-                <div className="min-w-0">
-                  <div className="text-sm font-medium">{c.name}</div>
-                  <div className="text-[11px] text-accent">{c.identity || "身份待补"}</div>
-                  <p className="mt-1 line-clamp-3 text-[11px] text-fg-dim">
-                    {[c.appearance, c.outfit, c.personality].filter(Boolean).join(" · ") || c.prompt}
-                  </p>
+                    ))
+                  ) : (
+                    <div className="flex h-16 w-12 items-center justify-center rounded-lg bg-panel-2 text-[10px] text-fg-faint">点开改</div>
+                  )}
+                </button>
+                <div className="min-w-0 flex-1">
+                  <button className="w-full text-left" onClick={() => props.onEdit("character", c.id)}>
+                    <div className="text-sm font-medium">{c.name}</div>
+                    <div className="text-[11px] text-accent">{c.identity || "身份待补"}</div>
+                    <p className="mt-1 line-clamp-3 text-[11px] text-fg-dim">
+                      {[c.appearance, c.outfit, c.personality].filter(Boolean).join(" · ") || c.prompt}
+                    </p>
+                  </button>
+                  <button
+                    className="mt-1 text-[10px] text-fg-faint hover:text-accent"
+                    onClick={() => props.onBind(c.id)}
+                  >
+                    {c.libraryAssetId ? "已从资产库钉住，换一张" : "从资产库选用"}
+                  </button>
                 </div>
               </div>
-            </button>
+            </div>
           ))}
         </div>
       </section>
@@ -465,6 +497,9 @@ function CastReview(props: {
                   <div>
                     <div className="text-xs">{a.name}</div>
                     <div className="text-[10px] text-fg-faint">{a.kind === "prop" ? "道具" : "场景"}</div>
+                    <button className="text-[10px] text-fg-faint hover:text-accent" onClick={() => props.onBind(a.id)}>
+                      {a.libraryAssetId ? "换一张" : "从资产库选用"}
+                    </button>
                   </div>
                 </div>
               ))}
@@ -496,6 +531,47 @@ function CastReview(props: {
         </div>
       </section>
     </div>
+  );
+}
+
+function ShotBoard({ bible }: { bible: DramaBible }) {
+  const names = new Map<string, string>();
+  for (const c of bible.cast ?? []) names.set(c.id, c.name);
+  for (const a of bible.assets ?? []) if (!names.has(a.id)) names.set(a.id, a.name);
+  return (
+    <section className="mb-5">
+      <h3 className="mb-2 text-xs text-fg-faint">分镜 · 景别运镜</h3>
+      <div className="space-y-3">
+        {bible.episodes.map((ep) => (
+          <div key={ep.index}>
+            <div className="mb-1 text-[11px] text-fg-faint">
+              第 {ep.index} 集 · {ep.title}
+            </div>
+            <div className="space-y-1.5">
+              {ep.shots.map((s, i) => (
+                <div key={`${ep.index}-${i}`} className="rounded-xl border border-line bg-panel px-3 py-2">
+                  <div className="flex flex-wrap gap-1.5 text-[10px]">
+                    {s.shotSize ? <span className="rounded bg-panel-2 px-1.5 py-0.5 text-accent">{shotSizeLabels[s.shotSize]}</span> : null}
+                    {s.cameraMove ? <span className="rounded bg-panel-2 px-1.5 py-0.5">{cameraMoveLabels[s.cameraMove]}</span> : null}
+                    {s.angle ? <span className="rounded bg-panel-2 px-1.5 py-0.5">{cameraAngleLabels[s.angle]}</span> : null}
+                    {s.sfxCue ? <span className="rounded bg-panel-2 px-1.5 py-0.5">音效 {s.sfxCue}</span> : null}
+                    {s.qa && !s.qa.ok ? <span className="rounded bg-amber-900/40 px-1.5 py-0.5 text-amber-200">质检 {s.qa.note}</span> : null}
+                    {s.qa?.ok ? <span className="rounded bg-panel-2 px-1.5 py-0.5 text-fg-faint">质检过了</span> : null}
+                  </div>
+                  <p className="mt-1 text-[12px] text-fg">{s.visual || s.imagePrompt}</p>
+                  {s.line ? <p className="text-[11px] text-fg-dim">「{s.line}」</p> : null}
+                  {s.entityIds?.length ? (
+                    <p className="mt-0.5 text-[10px] text-fg-faint">
+                      引用 {(s.entityIds.map((id) => names.get(id) ?? id)).join("、")}
+                    </p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 

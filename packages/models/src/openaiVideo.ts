@@ -1,3 +1,4 @@
+import { collectVideoImages, type VideoGenRequest } from "./blobs";
 import type { VideoGenResult } from "./index";
 
 function joinUrl(baseUrl: string, path: string): string {
@@ -33,15 +34,7 @@ function bytesToBase64(data: Uint8Array): string {
 
 export async function openaiGenerateVideo(
   config: Record<string, string>,
-  req: {
-    prompt: string;
-    durationSec?: number;
-    signal?: AbortSignal;
-    image?: { mime: string; data: Uint8Array };
-    lastFrame?: { mime: string; data: Uint8Array };
-    dialogue?: string;
-    audio?: boolean;
-  },
+  req: VideoGenRequest,
 ): Promise<VideoGenResult> {
   const headers = {
     "Content-Type": "application/json",
@@ -60,6 +53,13 @@ export async function openaiGenerateVideo(
         : {}),
       ...(req.lastFrame
         ? { last_frame: `data:${req.lastFrame.mime || "image/png"};base64,${bytesToBase64(req.lastFrame.data)}` }
+        : {}),
+      ...(/sora-2|sora2/i.test(config.model ?? "") && collectVideoImages(req).length > 1
+        ? {
+            reference_images: collectVideoImages(req)
+              .slice(0, 6)
+              .map((img) => `data:${img.mime || "image/png"};base64,${bytesToBase64(img.data)}`),
+          }
         : {}),
     }),
     signal: req.signal ?? null,

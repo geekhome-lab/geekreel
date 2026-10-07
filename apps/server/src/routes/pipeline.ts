@@ -1,7 +1,15 @@
 import { Hono } from "hono";
 import { jobQueue } from "../jobs/queue";
 import { err, ok } from "../lib/resp";
-import { advancePipeline, getPipeline, listPipelines, retryPipelineBible, revisePipelineBible, revisePipelineCast } from "../services/pipeline";
+import {
+  advancePipeline,
+  bindPipelineEntity,
+  getPipeline,
+  listPipelines,
+  retryPipelineBible,
+  revisePipelineBible,
+  revisePipelineCast,
+} from "../services/pipeline";
 import { loadPack } from "../services/styles";
 import { listEndpoints } from "../services/models";
 
@@ -95,6 +103,27 @@ pipelineRoutes.post("/:id/revise", async (c) => {
         targetId: body.targetId.trim(),
         instruction: body.instruction ?? "",
         images: body.images,
+      }),
+    );
+  } catch (e) {
+    return err(c, e instanceof Error ? e.message : String(e), 422);
+  }
+});
+
+pipelineRoutes.post("/:id/bind-entity", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as {
+    entityId?: string;
+    assetId?: string;
+    view?: "face" | "front" | "side" | "full";
+  };
+  if (!body.entityId?.trim() || !body.assetId?.trim()) return err(c, "先选一个角色或场景，再从资产库挑一张");
+  try {
+    return ok(
+      c,
+      bindPipelineEntity(c.req.param("id"), {
+        entityId: body.entityId.trim(),
+        assetId: body.assetId.trim(),
+        view: body.view,
       }),
     );
   } catch (e) {

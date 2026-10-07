@@ -6,11 +6,13 @@ import type {
   CharacterDossier,
   DramaAssetItem,
   DramaBible,
+  DramaShot,
   EntityKind,
   EntityView,
   EntityViewKind,
 } from "@vw/core";
 import { lockCastIntoPrompt } from "./lock";
+import { shotLanguageLine } from "./shotLang";
 
 export const VIEW_LABEL: Record<EntityViewKind, string> = {
   face: "脸",
@@ -130,6 +132,7 @@ export function lockProductionIntoPrompt(opts: {
   entityIds?: string[];
   lastFrame?: string | null;
   dialogue?: string | null;
+  shot?: Pick<DramaShot, "shotSize" | "cameraMove" | "angle"> | null;
 }): string {
   const used = entitiesForShot(opts.bible, opts.entityIds);
   const cast = used.filter((e): e is CharacterDossier => "appearance" in e);
@@ -146,7 +149,7 @@ export function lockProductionIntoPrompt(opts: {
       return `道具锁定「${e.name}」：${e.prompt}。外形材质不要改。`;
     })
     .join("\n");
-  return [more, base].filter(Boolean).join("\n");
+  return [more, base, shotLanguageLine(opts.shot)].filter(Boolean).join("\n");
 }
 
 export function assetsFromEntities(cast: CharacterDossier[], extras: DramaAssetItem[] = []): DramaAssetItem[] {
@@ -157,6 +160,7 @@ export function assetsFromEntities(cast: CharacterDossier[], extras: DramaAssetI
     prompt: c.prompt,
     imageAssetId: primaryEntityImage(c),
     views: c.views,
+    libraryAssetId: c.libraryAssetId,
   }));
   const seen = new Set(fromCast.map((a) => a.id));
   const rest = extras.filter((a) => a.id && !seen.has(a.id)).map((a) => ({

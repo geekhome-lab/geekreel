@@ -1,3 +1,4 @@
+import type { ImageGenRequest } from "./blobs";
 import type { ImageGenResult } from "./index";
 
 export function isDashScope(baseUrl: string): boolean {
@@ -61,12 +62,25 @@ async function sleep(ms: number, signal?: AbortSignal) {
 }
 
 /** 通义万相 / qwen-image-plus 不走 OpenAI /images/generations，要异步合成再轮询。 */
+function dataUri(img: { mime?: string; data: Uint8Array }): string {
+  const b64 =
+    typeof Buffer !== "undefined"
+      ? Buffer.from(img.data).toString("base64")
+      : btoa(Array.from(img.data, (b) => String.fromCharCode(b)).join(""));
+  return `data:${img.mime || "image/png"};base64,${b64}`;
+}
+
 export async function dashscopeGenerateImage(
   config: Record<string, string>,
-  req: { prompt: string; size?: string; signal?: AbortSignal },
+  req: ImageGenRequest,
 ): Promise<ImageGenResult> {
   const origin = dashscopeOrigin(config.baseUrl ?? "");
   const model = config.model || "qwen-image-plus";
+  const refs = req.refs ?? [];
+  const input: Record<string, unknown> = { prompt: req.prompt };
+  const canRef = /edit|i2i|image2image/i.test(model);
+  if (canRef && refs[0]) input.ref_img = dataUri(refs[0]);
+  if (canRef && refs.length > 1) input.ref_images = refs.slice(0, 6).map(dataUri);
   const submit = await fetch(`${origin}/api/v1/services/aigc/text2image/image-synthesis`, {
     method: "POST",
     headers: {
@@ -76,7 +90,7 @@ export async function dashscopeGenerateImage(
     },
     body: JSON.stringify({
       model,
-      input: { prompt: req.prompt },
+      input,
       parameters: { size: dashscopeImageSize(model, req.size), n: 1 },
     }),
     signal: req.signal ?? null,

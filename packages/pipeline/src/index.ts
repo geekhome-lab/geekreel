@@ -5,11 +5,23 @@
 
 import type { DramaAssetItem, DramaBible, DramaEpisode, DramaShot, PaletteDoc } from "@vw/core";
 import { bindEntitiesToShots } from "./entities";
+import { applySfxCues } from "./sfx";
+import { applyShotLanguage, parseCameraAngle, parseCameraMove, parseShotSize } from "./shotLang";
 
 export * from "./lock";
 export * from "./entities";
 export * from "./script";
 export * from "./dialogue";
+export * from "./dubMatch";
+export * from "./shotLang";
+export * from "./sfx";
+export * from "./qa";
+export * from "./libraryMatch";
+
+/** 实体引用 + 镜头语言 + 音效提示，拆完集就补上。 */
+export function finishBible(bible: DramaBible): DramaBible {
+  return applySfxCues(applyShotLanguage(bindEntitiesToShots(bible)));
+}
 
 export const NOVEL_DRAMA_SYSTEM =
   "你是国风短剧编剧。把故事拆成正好 5 集、每集 3 个镜头的可拍摄圣经。只输出 JSON，不要解释。";
@@ -23,7 +35,7 @@ export function novelDramaPrompt(story: string, packHint: string): string {
 ${packHint}
 
 输出 JSON：
-{"title":"剧名","palette":{"note":"色调一句话","colors":[{"name":"色名","hex":"#RRGGBB","role":"主/辅/点缀/底"}]},"assets":[{"id":"C01","kind":"character|scene|prop","name":"名","prompt":"造型描述"}],"episodes":[{"index":1,"title":"集标题","synopsis":"本集一事","narrator":"说书人旁白","lastFrame":"本集最后一格静止画面","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图的画面（先不要写风格词）"}]}]}
+{"title":"剧名","palette":{"note":"色调一句话","colors":[{"name":"色名","hex":"#RRGGBB","role":"主/辅/点缀/底"}]},"assets":[{"id":"C01","kind":"character|scene|prop","name":"名","prompt":"造型描述"}],"episodes":[{"index":1,"title":"集标题","synopsis":"本集一事","narrator":"说书人旁白","lastFrame":"本集最后一格静止画面","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图的画面（先不要写风格词）","shotSize":"cu|ms|fs|ls","cameraMove":"static|push|pull|pan|follow","angle":"eye|high|low|over"}]}]}
 
 故事：
 ${story.trim()}`;
@@ -41,7 +53,7 @@ ${packHint}
 上集尾帧：${locked.lastFrame || "无"}
 
 只输出 1 集、3 镜的 JSON：
-{"title":"${locked.title}","palette":{"note":"沿用","colors":[]},"assets":[],"episodes":[{"index":${locked.episodeIndex},"title":"本集标题","synopsis":"本集一事","narrator":"说书人旁白","lastFrame":"本集最后一格","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图（先不要写风格词）"}]}]}
+{"title":"${locked.title}","palette":{"note":"沿用","colors":[]},"assets":[],"episodes":[{"index":${locked.episodeIndex},"title":"本集标题","synopsis":"本集一事","narrator":"说书人旁白","lastFrame":"本集最后一格","shots":[{"startSec":0,"endSec":5,"visual":"画面","line":"对白或旁白","imagePrompt":"可直接文生图（先不要写风格词）","shotSize":"cu|ms|fs|ls","cameraMove":"static|push|pull|pan|follow","angle":"eye|high|low|over"}]}]}
 
 本集故事：
 ${story.trim()}`;
@@ -96,7 +108,7 @@ function normalizeBible(r: Record<string, unknown>, fallbackStory: string, episo
         };
       }).filter((e) => e.title || e.summary)
     : undefined;
-  return bindEntitiesToShots({
+  return finishBible({
     title: String(r.title ?? "").trim() || guessTitle(fallbackStory),
     packId: null,
     substyle: null,
@@ -158,6 +170,10 @@ function normalizeShot(raw: unknown, i: number): DramaShot {
     line: String(x.line ?? "").trim(),
     imagePrompt: String(x.imagePrompt ?? x.visual ?? "").trim(),
     entityIds: Array.isArray(x.entityIds) ? x.entityIds.map((id) => String(id)).filter(Boolean) : undefined,
+    shotSize: parseShotSize(x.shotSize ?? x.scale),
+    cameraMove: parseCameraMove(x.cameraMove ?? x.move),
+    angle: parseCameraAngle(x.angle ?? x.cameraAngle),
+    sfxCue: typeof x.sfxCue === "string" && x.sfxCue.trim() ? x.sfxCue.trim() : undefined,
   };
 }
 
@@ -188,14 +204,14 @@ function defaultShots(seed: string): DramaShot[] {
 
 export function fallbackBible(story: string, episodeCount = 5): DramaBible {
   const title = guessTitle(story);
-  return {
+  return finishBible({
     title,
     packId: null,
     substyle: null,
     palette: defaultPalette(),
     assets: [{ id: "C01", kind: "character", name: "主角", prompt: story.slice(0, 40) || "主角" }],
     episodes: fillToN([], story, title, episodeCount),
-  };
+  });
 }
 
 export function defaultPalette(): PaletteDoc {

@@ -114,6 +114,112 @@ export function layBgm(doc: TimelineDoc, assetId: string, opts?: { volume?: numb
   return { ...doc, tracks };
 }
 
+const AMB_TRACK_ID = "a_amb";
+const SFX_TRACK_ID = "a_sfx";
+
+/** 铺一层环境底，比配乐更低，不抢人声。 */
+export function layAmbience(doc: TimelineDoc, assetId: string, opts?: { volume?: number; durationMs?: number }): TimelineDoc {
+  const durationMs = Math.max(opts?.durationMs ?? timelineDuration(doc), 1000);
+  const volume = Math.min(1, Math.max(0.02, opts?.volume ?? 0.1));
+  const tracks = doc.tracks.filter((t) => t.id !== AMB_TRACK_ID);
+  const bgmIdx = tracks.findIndex((t) => t.id === BGM_TRACK_ID);
+  const videoIdx = tracks.findIndex((t) => t.type === "video");
+  const insertAt = bgmIdx >= 0 ? bgmIdx + 1 : videoIdx >= 0 ? videoIdx + 1 : tracks.length;
+  tracks.splice(insertAt, 0, {
+    id: AMB_TRACK_ID,
+    type: "audio",
+    name: "环境底",
+    clips: [
+      {
+        id: "c_amb",
+        assetId,
+        startMs: 0,
+        inMs: 0,
+        outMs: durationMs,
+        volume,
+      },
+    ],
+  });
+  return { ...doc, tracks };
+}
+
+function mergeRanges(ranges: Array<{ startMs: number; endMs: number }>): Array<{ startMs: number; endMs: number }> {
+  const sorted = ranges
+    .map((r) => ({ startMs: Math.max(0, r.startMs), endMs: Math.max(r.startMs, r.endMs) }))
+    .filter((r) => r.endMs > r.startMs)
+    .sort((a, b) => a.startMs - b.startMs);
+  const out: Array<{ startMs: number; endMs: number }> = [];
+  for (const r of sorted) {
+    const last = out.at(-1);
+    if (!last || r.startMs > last.endMs) out.push({ ...r });
+    else last.endMs = Math.max(last.endMs, r.endMs);
+  }
+  return out;
+}
+
+/** 有人声的区间把配乐压下去，空镜再抬回来。 */
+export function duckBgm(
+  doc: TimelineDoc,
+  ranges: Array<{ startMs: number; endMs: number }>,
+  opts?: { duck?: number; full?: number },
+): TimelineDoc {
+  const track = doc.tracks.find((t) => t.id === BGM_TRACK_ID);
+  const src = track?.clips[0];
+  if (!src?.assetId) return doc;
+  const duration = Math.max(src.outMs - src.inMs, timelineDuration(doc), 1000);
+  const full = Math.min(1, Math.max(0.04, opts?.full ?? src.volume ?? 0.22));
+  const duck = Math.min(full, Math.max(0.02, opts?.duck ?? 0.07));
+  const holes = mergeRanges(ranges.map((r) => ({ startMs: r.startMs, endMs: Math.min(duration, r.endMs) })));
+  if (!holes.length) return doc;
+  const clips: TimelineClip[] = [];
+  let cursor = 0;
+  let i = 0;
+  const push = (start: number, end: number, volume: number) => {
+    if (end <= start) return;
+    clips.push({
+      id: `c_bgm_${i++}`,
+      assetId: src.assetId,
+      startMs: start,
+      inMs: start,
+      outMs: end,
+      volume,
+    });
+  };
+  for (const r of holes) {
+    push(cursor, r.startMs, full);
+    push(r.startMs, r.endMs, duck);
+    cursor = r.endMs;
+  }
+  push(cursor, duration, full);
+  return {
+    ...doc,
+    tracks: doc.tracks.map((t) => (t.id === BGM_TRACK_ID ? { ...t, clips } : t)),
+  };
+}
+
+/** 按镜落短音效，叠在配乐和环境底上面。 */
+export function laySfxHits(
+  doc: TimelineDoc,
+  hits: Array<{ startMs: number; assetId: string; durationMs?: number }>,
+): TimelineDoc {
+  const clips = hits
+    .filter((h) => h.assetId && h.startMs >= 0)
+    .map((h, i) => ({
+      id: `c_sfx_${i}`,
+      assetId: h.assetId,
+      startMs: h.startMs,
+      inMs: 0,
+      outMs: Math.max(400, h.durationMs ?? 1400),
+      volume: 0.7,
+    }));
+  const tracks = doc.tracks.filter((t) => t.id !== SFX_TRACK_ID);
+  if (!clips.length) return { ...doc, tracks };
+  const ambIdx = tracks.findIndex((t) => t.id === AMB_TRACK_ID || t.id === BGM_TRACK_ID);
+  const insertAt = ambIdx >= 0 ? ambIdx + 1 : tracks.length;
+  tracks.splice(insertAt, 0, { id: SFX_TRACK_ID, type: "audio", name: "音效", clips });
+  return { ...doc, tracks };
+}
+
 // ---------------------------------------------------------------------------
 // SRT
 // ---------------------------------------------------------------------------

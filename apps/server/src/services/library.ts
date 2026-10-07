@@ -372,6 +372,36 @@ export function assetStats() {
   return { byType, byMonth, total: total.count, big };
 }
 
+export function findNamedEntityAssets(kind: "character" | "scene" | "prop", name: string): Asset[] {
+  const q = name.trim();
+  if (!q) return [];
+  const rows = db
+    .query(
+      `SELECT * FROM assets
+       WHERE type = 'image' AND (kind = ? OR kind = 'generic')
+         AND (title LIKE ? OR id IN (SELECT assetId FROM asset_tags WHERE tag = ?))
+       ORDER BY favorite DESC, createdAt DESC
+       LIMIT 16`,
+    )
+    .all(kind, `%${q}%`, q) as Record<string, unknown>[];
+  return hydrateAssets(rows);
+}
+
+export function findSfxAsset(cue: string): Asset | null {
+  const q = cue.trim();
+  if (!q) return null;
+  const row = db
+    .query(
+      `SELECT * FROM assets
+       WHERE type = 'audio'
+         AND (title LIKE ? OR id IN (SELECT assetId FROM asset_tags WHERE tag LIKE ?))
+       ORDER BY favorite DESC, createdAt DESC
+       LIMIT 1`,
+    )
+    .get(`%${q}%`, `%${q}%`) as Record<string, unknown> | null;
+  return row ? rowToAsset(row) : null;
+}
+
 export function clearLibraryCache(): { deleted: boolean; path: string } {
   const path = join(libraryRoot(), ".cache");
   if (existsSync(path)) rmSync(path, { recursive: true, force: true });

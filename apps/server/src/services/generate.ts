@@ -2,11 +2,12 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { clipDuration, extFromFileName, extFromMime, mimeFromExt, type TimelineDoc } from "@vw/core";
 import { getAdapter, wanVideoChunks } from "@vw/models";
+import { clipSpokenText, isTalkingShot } from "@vw/pipeline";
 import { injectImagePrompt } from "@vw/style";
 import { burnCaption, concatVideos, cropAspect, detectBins, probe, transcodeMp4, videoThumbnail } from "@vw/media";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
-import { maybeEnqueueFinish } from "./dub";
+import { maybeEnqueueFinish, speakOne } from "./dub";
 import { resolveEndpoint } from "./models";
 import { absInLibrary, replaceAssetContent, storeAsset } from "./library";
 import { loadPack } from "./styles";
@@ -42,6 +43,7 @@ export const genImageHandler: JobHandler = async (job, ctx) => {
     endpointId?: string;
     projectId?: string;
     replaceAssetId?: string;
+    refAssetIds?: string[];
   };
   if (!payload.prompt?.trim()) throw new Error("缺少提示词");
   const projectId = payload.projectId ?? job.projectId;
@@ -54,10 +56,21 @@ export const genImageHandler: JobHandler = async (job, ctx) => {
   if (!adapter?.generateImage) throw new Error(`适配器 ${endpoint.adapterType} 不支持图片生成`);
 
   ctx.progress(0.15, `调用 ${endpoint.name}`);
+  const refs = (payload.refAssetIds ?? [])
+    .map((id) => {
+      const img = db.query("SELECT path FROM assets WHERE id = ? AND type = 'image'").get(id) as { path: string } | null;
+      if (!img) return null;
+      return {
+        mime: mimeFromExt(extFromFileName(img.path) || "png"),
+        data: new Uint8Array(readFileSync(absInLibrary(img.path))),
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => Boolean(x));
   const result = await adapter.generateImage(endpoint.config, {
     prompt,
     size: payload.size,
     signal: ctx.signal,
+    refs,
   });
 
   ctx.progress(0.85, payload.replaceAssetId ? "覆盖原来那张" : "产物入库");
@@ -160,11 +173,13 @@ export const timelineTtsHandler: JobHandler = async (job, ctx) => {
   let done = 0;
   for (const sub of subs) {
     ctx.progress(0.1 + (done / subs.length) * 0.8, `配音 ${done + 1}/${subs.length}`);
-    const speech = await adapter.generateSpeech(endpoint.config, { text: sub.text!.trim(), signal: ctx.signal });
+    const text = clipSpokenText(sub.text!.trim(), clipDuration(sub));
+    if (!text) continue;
+    const speech = await adapter.generateSpeech(endpoint.config, { text, signal: ctx.signal });
     const ext = extFromMime(speech.mime, "mp3");
     const asset = storeAsset({
       type: "audio",
-      title: sub.text!.trim().slice(0, 20) || "配音",
+      title: text.slice(0, 20) || "配音",
       ext,
       source: "tts",
       projectId: payload.projectId,
@@ -175,8 +190,8 @@ export const timelineTtsHandler: JobHandler = async (job, ctx) => {
       try {
         const info = await probe(bins.ffprobe, absInLibrary(asset.path));
         if (info?.durationMs) {
-          dur = info.durationMs;
-          db.run("UPDATE assets SET durationMs = ? WHERE id = ?", [dur, asset.id]);
+          db.run("UPDATE assets SET durationMs = ? WHERE id = ?", [info.durationMs, asset.id]);
+          dur = Math.min(clipDuration(sub), info.durationMs);
         }
       } catch {
         /* 用字幕时长 */
@@ -194,7 +209,7 @@ export const timelineTtsHandler: JobHandler = async (job, ctx) => {
       endpoint,
       projectId: payload.projectId,
       jobType: "timeline.tts",
-      audioChars: sub.text!.trim().length,
+      audioChars: text.length,
     });
     done++;
   }
@@ -213,6 +228,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     projectId?: string;
     imageAssetId?: string;
     lastFrameAssetId?: string;
+    refAssetIds?: string[];
     dialogue?: string;
     autoDub?: boolean;
   };
@@ -241,24 +257,64 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     ? undefined
     : readImage(payload.lastFrameAssetId);
   const dialogue = payload.dialogue?.trim() || undefined;
+  const talking = Boolean(dialogue) && isTalkingShot({ line: dialogue, visual: prompt });
 
   const wantSec = payload.durationSec || 5;
+  let voiceBlob: { mime: string; data: Uint8Array } | undefined;
+  if (talking && dialogue) {
+    ctx.progress(0.12, "先配音，再对嘴");
+    const spoken = await speakOne(clipSpokenText(dialogue, wantSec * 1000), { projectId, signal: ctx.signal });
+    if (spoken) {
+      const row = db.query("SELECT path FROM assets WHERE id = ?").get(spoken.assetId) as { path: string } | null;
+      if (row) {
+        voiceBlob = {
+          mime: mimeFromExt(extFromFileName(row.path) || "mp3"),
+          data: new Uint8Array(readFileSync(absInLibrary(row.path))),
+        };
+      }
+    }
+  }
+
   const chunks = wanVideoChunks(endpoint.config.model ?? "", wantSec);
   ctx.progress(0.15, `正在生成 ${endpoint.name}，${wantSec}秒${chunks.length > 1 ? `（模型一次最多 ${chunks[0]} 秒，会接成一段）` : ""}`);
   const clips: Array<{ data: Uint8Array; mime: string; durationSec?: number }> = [];
-  for (let i = 0; i < chunks.length; i++) {
-    ctx.progress(0.15 + (i / chunks.length) * 0.6, chunks.length > 1 ? `第 ${i + 1}/${chunks.length} 段` : `正在生成 ${endpoint.name}`);
-    clips.push(
-      await adapter.generateVideo(endpoint.config, {
-        prompt,
-        durationSec: chunks[i],
-        signal: ctx.signal,
-        image,
-        lastFrame,
-        dialogue,
-        audio: Boolean(dialogue),
-      }),
-    );
+  let lipSynced = false;
+  if (talking && voiceBlob && image && adapter.lipSync) {
+    try {
+      ctx.progress(0.2, "用配音对口型出片");
+      clips.push(
+        await adapter.lipSync(endpoint.config, {
+          image,
+          audio: voiceBlob,
+          text: dialogue,
+          durationSec: wantSec,
+          signal: ctx.signal,
+        }),
+      );
+      lipSynced = true;
+    } catch {
+      /* 模型对不上嘴就走普通出片 */
+    }
+  }
+  if (!lipSynced) {
+    for (let i = 0; i < chunks.length; i++) {
+      ctx.progress(0.15 + (i / chunks.length) * 0.6, chunks.length > 1 ? `第 ${i + 1}/${chunks.length} 段` : `正在生成 ${endpoint.name}`);
+      clips.push(
+        await adapter.generateVideo(endpoint.config, {
+          prompt,
+          durationSec: chunks[i],
+          signal: ctx.signal,
+          image,
+          lastFrame,
+          refs: skipRef
+            ? undefined
+            : (payload.refAssetIds ?? []).map(readImage).filter((x): x is NonNullable<typeof x> => Boolean(x)),
+          dialogue,
+          audio: Boolean(dialogue),
+          voice: voiceBlob,
+        }),
+      );
+    }
   }
   let bytes = clips[0]!.data;
   let mime = clips[0]!.mime;
@@ -323,7 +379,7 @@ export const genVideoHandler: JobHandler = async (job, ctx) => {
     }
   }
   ctx.progress(1, "视频已入库，够数了会装字幕");
-  return { assetId: asset.id, endpointId: endpoint.id, lipSynced: Boolean(dialogue) && endpoint.adapterType === "openai-compatible" };
+  return { assetId: asset.id, endpointId: endpoint.id, lipSynced };
 };
 
 export const mediaTranscodeHandler: JobHandler = async (job, ctx) => {

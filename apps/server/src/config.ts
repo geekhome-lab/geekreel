@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
 
-export const version = "0.1.0";
+export const version = "0.1.1";
 export const port = Number(process.env.VW_PORT ?? 4780);
 export const host = process.env.VW_HOST ?? "127.0.0.1";
 

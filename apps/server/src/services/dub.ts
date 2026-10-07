@@ -1,15 +1,29 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DramaBible, ScriptDoc, TimelineDoc } from "@vw/core";
-import { detectBins, probe } from "@vw/media";
+import { extFromFileName, extFromMime, mimeFromExt, type DramaBible, type ScriptDoc, type TimelineDoc } from "@vw/core";
+import { detectBins, probe, videoThumbnail } from "@vw/media";
 import { getAdapter, type ModelEndpoint } from "@vw/models";
-import { buildFinishTimeline, cuesFromScenes, extractDialogue, fitCuesToClips, spokenLine, splitSpokenCues, type DubbedClip, type FinishClip } from "@vw/pipeline";
+import {
+  buildFinishTimeline,
+  DUB_FROM_VIDEO_SYSTEM,
+  dubFromVideoPrompt,
+  dubStoryHint,
+  extractDialogue,
+  isTalkingShot,
+  lineFromClipSource,
+  parseDubFromVideo,
+  spokenLine,
+  splitSpokenCues,
+  type DubbedClip,
+  type FinishClip,
+} from "@vw/pipeline";
 import { db } from "../db";
 import { jobQueue, type JobHandler } from "../jobs/queue";
 import { absInLibrary, storeAsset } from "./library";
-import { resolveEndpoint } from "./models";
+import { getEndpoint, listEndpoints, resolveEndpoint } from "./models";
 import { loadProjectScript, projectDirectory } from "./scriptStore";
-import { recordUsage } from "./usage";
+import { chatMetered, recordUsage } from "./usage";
 
 type CanvasNode = {
   id: string;
@@ -51,7 +65,7 @@ function assetDurationMs(assetId: string, fallback: number): number {
   return fallback;
 }
 
-function collectFromCanvas(dir: string, projectId: string, script: ScriptDoc | null): FinishClip[] {
+function collectFromCanvas(dir: string, projectId: string): FinishClip[] {
   const canvas = loadCanvas(dir, projectId);
   if (!canvas) return [];
   const gen = canvas.nodes
@@ -60,25 +74,21 @@ function collectFromCanvas(dir: string, projectId: string, script: ScriptDoc | n
   if (gen.length === 0) return [];
 
   const byId = new Map(canvas.nodes.map((n) => [n.id, n]));
-  const clips = gen.map((n, i) => {
+  const clips = gen.map((n) => {
     const assetId = String(n.data!.assetId);
     const ownLine = typeof n.data?.line === "string" ? n.data.line.trim() : "";
+    const nodePrompt = typeof n.data?.prompt === "string" ? n.data.prompt.trim() : "";
     const textEdge = canvas.edges.find((e) => e.target === n.id && (e.targetHandle === "prompt" || !e.targetHandle));
     const textNode = textEdge ? byId.get(textEdge.source) : undefined;
     const prompt = typeof textNode?.data?.text === "string" ? textNode.data.text : "";
-    const fromPrompt = extractDialogue(prompt);
-    const fromScript = script?.scenes[i] ? spokenLine(script.scenes[i]!) : "";
-    const line = ownLine || fromPrompt || fromScript;
+    const visual = nodePrompt || prompt;
+    const fromPrompt = extractDialogue(visual);
+    const line = ownLine || fromPrompt;
     const nodeSec = Number(n.data?.durationSec);
     const fallback = Number.isFinite(nodeSec) && nodeSec > 0 ? nodeSec * 1000 : 5000;
     const durationMs = assetDurationMs(assetId, fallback);
-    return { videoAssetId: assetId, durationMs, line, cues: splitSpokenCues(line, durationMs) };
+    return { videoAssetId: assetId, durationMs, line, visual, cues: splitSpokenCues(line, durationMs) };
   });
-  if (clips.length === 1 && (script?.scenes.length ?? 0) > 1) {
-    const durationMs = clips[0]!.durationMs;
-    const line = script!.scenes.map((s) => spokenLine(s)).filter(Boolean).join("\n");
-    return [{ ...clips[0]!, line, cues: cuesFromScenes(script!.scenes, durationMs) }];
-  }
   return clips;
 }
 
@@ -95,7 +105,8 @@ function collectFromBible(dir: string): FinishClip[] {
       const fallback = Math.max(400, Math.round(((shot.endSec ?? 0) - (shot.startSec ?? 0)) * 1000) || 5000);
       const durationMs = assetDurationMs(assetId, fallback);
       const line = (shot.line ?? "").trim();
-      return [{ videoAssetId: assetId, durationMs, line, cues: splitSpokenCues(line, durationMs) }];
+      const visual = (shot.visual || shot.imagePrompt || "").trim();
+      return [{ videoAssetId: assetId, durationMs, line, visual, cues: splitSpokenCues(line, durationMs) }];
     });
   } catch {
     return [];
@@ -167,34 +178,43 @@ function collectFromProjectVideos(projectId: string, script: ScriptDoc | null): 
     )
     .all(projectId) as Array<{ id: string; durationMs: number | null }>;
   const scenes = script?.scenes ?? [];
-  if (rows.length === 1) {
-    const durationMs = rows[0]!.durationMs && rows[0]!.durationMs > 200 ? rows[0]!.durationMs : 5000;
-    const line = scenes.map((s) => spokenLine(s)).filter(Boolean).join("\n");
-    return [
-      {
-        videoAssetId: rows[0]!.id,
-        durationMs,
-        line,
-        cues: cuesFromScenes(scenes, durationMs),
-      },
-    ];
-  }
+  const oneToOne = rows.length === scenes.length && rows.length > 0;
   return rows.map((row, i) => {
     const durationMs = row.durationMs && row.durationMs > 200 ? row.durationMs : 5000;
-    const line = scenes[i] ? spokenLine(scenes[i]!) : "";
-    return { videoAssetId: row.id, durationMs, line, cues: splitSpokenCues(line, durationMs) };
+    const scene = oneToOne ? scenes[i] : undefined;
+    const line = scene ? spokenLine(scene) : "";
+    const visual = scene ? `${scene.heading}\n${scene.action}`.trim() : "";
+    return { videoAssetId: row.id, durationMs, line, visual, cues: splitSpokenCues(line, durationMs) };
   });
+}
+
+function bindClipLine(clip: FinishClip): FinishClip {
+  const line = lineFromClipSource({ durationMs: clip.durationMs, line: clip.line, visual: clip.visual });
+  return {
+    ...clip,
+    line,
+    talking: isTalkingShot({ line, visual: clip.visual }),
+    cues: splitSpokenCues(line, clip.durationMs),
+  };
+}
+
+function mediaBytes(assetId: string, type: "audio" | "video"): { mime: string; data: Uint8Array } | undefined {
+  const row = db.query("SELECT path FROM assets WHERE id = ? AND type = ?").get(assetId, type) as { path: string } | null;
+  if (!row) return undefined;
+  const abs = absInLibrary(row.path);
+  if (!existsSync(abs)) return undefined;
+  const ext = extFromFileName(row.path) || (type === "audio" ? "mp3" : "mp4");
+  return { mime: mimeFromExt(ext), data: new Uint8Array(readFileSync(abs)) };
 }
 
 export function collectFinishClips(projectId: string): FinishClip[] {
   const dir = projectDirectory(projectId);
   if (!dir) throw new Error("项目不存在");
   const script = loadProjectScript(projectId);
-  const fromCanvas = collectFromCanvas(dir, projectId, script);
+  const fromCanvas = collectFromCanvas(dir, projectId);
   const raw = fromCanvas.length ? fromCanvas : collectFromProjectVideos(projectId, script);
   const clips = raw.length ? raw : collectFromBible(dir);
-  if (script?.scenes.length) return fitCuesToClips(clips, script.scenes);
-  return clips;
+  return clips.map(bindClipLine);
 }
 
 export function maybeEnqueueFinish(projectId: string, withSubtitles = true): void {
@@ -216,6 +236,169 @@ export function maybeEnqueueFinish(projectId: string, withSubtitles = true): voi
   jobQueue.submit("timeline.finish", { projectId, withSubtitles, dub: false }, projectId);
 }
 
+function resolveDubLlm(): ModelEndpoint | null {
+  const all = listEndpoints("llm").filter((e) => e.enabled);
+  const pick = all.find((e) => e.vision) ?? all[0];
+  return pick ? getEndpoint(pick.id, true) : null;
+}
+
+function frameTimes(durationMs: number): number[] {
+  const d = Math.max(400, durationMs);
+  if (d < 1500) return [Math.round(d * 0.4)];
+  if (d < 4000) return [Math.round(d * 0.18), Math.round(d * 0.78)];
+  return [Math.round(d * 0.12), Math.round(d * 0.5), Math.round(d * 0.88)];
+}
+
+async function grabClipFrames(
+  ffmpeg: string,
+  assetId: string,
+  durationMs: number,
+  signal?: AbortSignal,
+): Promise<Array<{ mime: string; data: Uint8Array }>> {
+  const row = db.query("SELECT path FROM assets WHERE id = ?").get(assetId) as { path: string } | null;
+  if (!row) return [];
+  const abs = absInLibrary(row.path);
+  if (!existsSync(abs)) return [];
+  const tmp = mkdtempSync(join(tmpdir(), "vw-dub-"));
+  try {
+    const out: Array<{ mime: string; data: Uint8Array }> = [];
+    for (const [i, at] of frameTimes(durationMs).entries()) {
+      const file = join(tmp, `f${i}.jpg`);
+      try {
+        await videoThumbnail(ffmpeg, abs, file, at, signal);
+        if (existsSync(file)) out.push({ mime: "image/jpeg", data: new Uint8Array(readFileSync(file)) });
+      } catch {
+        /* 这一帧抽失败就跳过 */
+      }
+    }
+    return out;
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+async function linesFromVideos(
+  clips: FinishClip[],
+  opts: {
+    projectId: string;
+    storyHint?: string;
+    signal?: AbortSignal;
+    onProgress?: (i: number, n: number) => void;
+  },
+): Promise<FinishClip[]> {
+  const llm = resolveDubLlm();
+  const adapter = llm ? getAdapter(llm.adapterType) : null;
+  const bins = await detectBins();
+  const out: FinishClip[] = [];
+  for (let i = 0; i < clips.length; i++) {
+    const clip = clips[i]!;
+    opts.onProgress?.(i, clips.length);
+    let line = lineFromClipSource({ durationMs: clip.durationMs, line: clip.line, visual: clip.visual });
+    if (adapter?.chat && llm) {
+      try {
+        const images = llm.vision && bins.ffmpeg ? await grabClipFrames(bins.ffmpeg, clip.videoAssetId, clip.durationMs, opts.signal) : [];
+        const text = await chatMetered(
+          adapter,
+          llm,
+          {
+            system: DUB_FROM_VIDEO_SYSTEM,
+            prompt: dubFromVideoPrompt({
+              durationMs: clip.durationMs,
+              visual: clip.visual,
+              storyHint: opts.storyHint,
+              draft: line,
+            }),
+            images: images.length ? images : undefined,
+          },
+          { projectId: opts.projectId, jobType: "timeline.dub" },
+        );
+        const parsed = parseDubFromVideo(text, clip.durationMs);
+        line = parsed.silent ? "" : parsed.line || line;
+      } catch {
+        /* 用这一镜自己的词 */
+      }
+    }
+    out.push({
+      ...clip,
+      line,
+      talking: isTalkingShot({ line, visual: clip.visual }),
+      cues: splitSpokenCues(line, clip.durationMs),
+    });
+  }
+  return out;
+}
+
+async function lipSyncTalkingClips(
+  clips: FinishClip[],
+  dubbed: DubbedClip[],
+  opts: {
+    projectId: string;
+    signal?: AbortSignal;
+    onProgress?: (i: number, n: number) => void;
+  },
+): Promise<FinishClip[]> {
+  const talking = clips.filter((c, i) => c.talking && c.line.trim() && dubbed[i]?.assetId);
+  if (!talking.length) return clips;
+  const videoEp = resolveEndpoint("video");
+  const adapter = videoEp ? getAdapter(videoEp.adapterType) : null;
+  if (!videoEp || (!adapter?.lipSync && !adapter?.generateVideo)) return clips;
+  const bins = await detectBins();
+  const out = clips.map((c) => ({ ...c }));
+  for (let i = 0; i < out.length; i++) {
+    const clip = out[i]!;
+    const voice = dubbed[i];
+    if (!clip.talking || !clip.line.trim() || !voice?.assetId) continue;
+    opts.onProgress?.(i, out.length);
+    const audio = mediaBytes(voice.assetId, "audio");
+    const film = mediaBytes(clip.videoAssetId, "video");
+    let still: { mime: string; data: Uint8Array } | undefined;
+    if (bins.ffmpeg) {
+      const frames = await grabClipFrames(bins.ffmpeg, clip.videoAssetId, clip.durationMs, opts.signal).catch(() => []);
+      still = frames[0];
+    }
+    if (!audio || (!still && !film)) continue;
+    try {
+      const durSec = Math.max(3, Math.round(clip.durationMs / 1000) || 5);
+      const lip = adapter.lipSync
+        ? await adapter.lipSync(videoEp.config, {
+            image: still,
+            video: film,
+            audio,
+            text: clip.line,
+            durationSec: durSec,
+            signal: opts.signal,
+          })
+        : await adapter.generateVideo!(videoEp.config, {
+            prompt: `角色对着镜头说：「${clip.line}」。嘴型必须对上这句，能出声就一起出声。`,
+            durationSec: durSec,
+            image: still,
+            dialogue: clip.line,
+            audio: true,
+            voice: audio,
+            signal: opts.signal,
+          });
+      const asset = storeAsset({
+        type: "video",
+        title: clip.line.slice(0, 16) || "对口型",
+        ext: extFromMime(lip.mime, "mp4"),
+        source: "pipeline",
+        projectId: opts.projectId,
+        data: lip.data,
+      });
+      recordUsage({
+        endpoint: videoEp,
+        projectId: opts.projectId,
+        jobType: "timeline.lipsync",
+        videoSec: lip.durationSec ?? durSec,
+      });
+      out[i] = { ...clip, videoAssetId: asset.id, durationMs: (lip.durationSec ?? durSec) * 1000 };
+    } catch {
+      /* 铺声，嘴可能对不上 */
+    }
+  }
+  return out;
+}
+
 export async function finishTimeline(input: {
   projectId: string;
   withSubtitles?: boolean;
@@ -227,12 +410,22 @@ export async function finishTimeline(input: {
 }): Promise<{ doc: TimelineDoc; clipCount: number; dubbed: number; subtitled: number; missingTts: boolean }> {
   const dir = projectDirectory(input.projectId);
   if (!dir) throw new Error("项目不存在");
-  const clips = collectFinishClips(input.projectId);
+  let clips = collectFinishClips(input.projectId);
   if (clips.length === 0) {
     throw new Error("还没有视频。先出片，再配音。");
   }
   const shouldDub = input.dub === true;
-  input.onProgress?.(0.15, shouldDub ? `在给 ${clips.length} 镜配音` : "在装画面和字幕");
+  if (shouldDub) {
+    input.onProgress?.(0.12, `在看 ${clips.length} 镜成片写词`);
+    clips = await linesFromVideos(clips, {
+      projectId: input.projectId,
+      storyHint: dubStoryHint(loadProjectScript(input.projectId)),
+      signal: input.signal,
+      onProgress: (i, n) => input.onProgress?.(0.12 + (i / Math.max(1, n)) * 0.2, `在看第 ${i + 1} 镜画面`),
+    });
+  } else {
+    input.onProgress?.(0.15, "在装画面和字幕");
+  }
   const { dubbed, missingTts } = shouldDub
     ? await speakLines(
         clips.map((c) => c.line),
@@ -241,10 +434,18 @@ export async function finishTimeline(input: {
           endpointId: input.ttsEndpointId,
           voice: input.voice,
           signal: input.signal,
-          onProgress: (i, n) => input.onProgress?.(0.15 + (i / Math.max(1, n)) * 0.75, `配音 ${i + 1}/${n}`),
+          onProgress: (i, n) => input.onProgress?.(0.32 + (i / Math.max(1, n)) * 0.28, `配音 ${i + 1}/${n}`),
         },
       )
     : { dubbed: clips.map(() => ({ assetId: "", durationMs: 0 })), missingTts: false };
+  if (shouldDub && dubbed.some((d) => d.assetId) && clips.some((c) => c.talking)) {
+    input.onProgress?.(0.62, "对白镜在对口型");
+    clips = await lipSyncTalkingClips(clips, dubbed, {
+      projectId: input.projectId,
+      signal: input.signal,
+      onProgress: (i, n) => input.onProgress?.(0.62 + (i / Math.max(1, n)) * 0.28, `第 ${i + 1} 镜对口型`),
+    });
+  }
   const doc = buildFinishTimeline(clips, {
     portrait: isPortraitProject(input.projectId),
     withSubtitles: input.withSubtitles !== false,
@@ -278,7 +479,7 @@ export const timelineFinishHandler: JobHandler = async (job, ctx) => {
   const note = result.missingTts
     ? "画面和字幕已装上。还没有语音模型，到「模型」页加一个再选音色。"
     : result.dubbed
-      ? `已配 ${result.dubbed} 段，时间线可微调`
+      ? `已按成片配 ${result.dubbed} 段。对白镜会再对嘴`
       : "画面和字幕已装上。到时间线选音色再配音。";
   ctx.progress(1, note);
   return result;

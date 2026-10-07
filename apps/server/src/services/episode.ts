@@ -1,16 +1,38 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { emptyTimelineDoc, extFromFileName, extFromMime, layBgm, mimeFromExt, type DramaBible, type DramaShot } from "@vw/core";
+import {
+  duckBgm,
+  emptyTimelineDoc,
+  extFromFileName,
+  extFromMime,
+  layAmbience,
+  layBgm,
+  laySfxHits,
+  mimeFromExt,
+  type DramaBible,
+  type DramaShot,
+  type ShotQa,
+} from "@vw/core";
 import { detectBins, probe, videoThumbnail } from "@vw/media";
 import { getAdapter } from "@vw/models";
-import { lockProductionIntoPrompt, pickShotRefImages, primaryEntityImage, shotDurationSec } from "@vw/pipeline";
+import {
+  heuristicShotQa,
+  lockProductionIntoPrompt,
+  clipSpokenText,
+  parseShotQa,
+  pickShotRefImages,
+  primaryEntityImage,
+  qaReviewPrompt,
+  shouldRetryQa,
+  shotDurationSec,
+} from "@vw/pipeline";
 import { db } from "../db";
 import type { JobHandler } from "../jobs/queue";
 import { now } from "../lib/resp";
 import { speakOne } from "./dub";
-import { absInLibrary, storeAsset } from "./library";
+import { absInLibrary, findSfxAsset, storeAsset } from "./library";
 import { resolveEndpoint } from "./models";
-import { recordUsage } from "./usage";
+import { chatMetered, recordUsage } from "./usage";
 
 function loadBible(projectId: string): { bible: DramaBible; directory: string } {
   const row = db.query("SELECT directory FROM projects WHERE id = ?").get(projectId) as { directory: string } | null;
@@ -62,8 +84,10 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
   const imageEp = resolveEndpoint("image", payload.imageEndpointId);
   const videoEp = resolveEndpoint("video", payload.videoEndpointId);
   const ttsEp = resolveEndpoint("tts", payload.ttsEndpointId);
+  const llmEp = resolveEndpoint("llm");
   const imageAd = imageEp ? getAdapter(imageEp.adapterType) : null;
   const videoAd = videoEp ? getAdapter(videoEp.adapterType) : null;
+  const llmAd = llmEp ? getAdapter(llmEp.adapterType) : null;
   if (!imageAd?.generateImage && !videoAd?.generateVideo) {
     throw new Error("出集至少要有图片或视频模型。到「模型」页加上再来。");
   }
@@ -92,6 +116,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       entityIds: shot.entityIds,
       lastFrame: lastFrameDesc || null,
       dialogue: shot.line || null,
+      shot,
     });
     const refIds = pickShotRefImages(bible, shot.entityIds, lastFrameId ? [lastFrameId] : []);
     const faceId =
@@ -99,88 +124,150 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
         .filter((c) => !shot.entityIds?.length || shot.entityIds.includes(c.id))
         .map((c) => primaryEntityImage(c))
         .find(Boolean) ?? refIds[0];
-    const startImage = imageBytes(faceId) ?? imageBytes(lastFrameId) ?? imageBytes(refIds[0]);
+    const refs = refIds.map((id) => imageBytes(id)).filter((x): x is NonNullable<typeof x> => Boolean(x));
+    const startImage = imageBytes(faceId) ?? imageBytes(lastFrameId) ?? refs[0];
 
     let imageAssetId: string | null = lastFrameId ?? refIds[0] ?? null;
     let videoAssetId: string | null = null;
     let audioAssetId: string | null = null;
     let lipSynced = false;
     let lipsNote: string | null = null;
+    let paintedId: string | null = null;
+    let outputFrameId: string | null = null;
+    let qa: ShotQa | null = heuristicShotQa(refIds.length > 0);
 
-    if (!imageAssetId && imageAd?.generateImage && imageEp) {
+    const paintStill = async (text: string) => {
+      if (!imageAd?.generateImage || !imageEp) return null;
+      const still = await imageAd.generateImage(imageEp.config, {
+        prompt: text,
+        size: "1024x1536",
+        signal: ctx.signal,
+        refs,
+      });
+      const asset = storeAsset({
+        type: "image",
+        title: `${bible.title} E${ep.index}-${i + 1}`,
+        ext: extFromMime(still.mime, "png"),
+        source: "pipeline",
+        projectId,
+        data: still.data,
+      });
+      recordUsage({ endpoint: imageEp, projectId, jobType: "pipeline.episode", images: 1 });
+      return asset.id;
+    };
+
+    if (!imageAssetId) {
       try {
-        const still = await imageAd.generateImage(imageEp.config, {
-          prompt,
-          size: "1024x1536",
-          signal: ctx.signal,
-        });
-        const asset = storeAsset({
-          type: "image",
-          title: `${bible.title} E${ep.index}-${i + 1}`,
-          ext: extFromMime(still.mime, "png"),
-          source: "pipeline",
-          projectId,
-          data: still.data,
-        });
-        recordUsage({ endpoint: imageEp, projectId, jobType: "pipeline.episode", images: 1 });
-        imageAssetId = asset.id;
+        paintedId = await paintStill(prompt);
+        imageAssetId = paintedId ?? imageAssetId;
+        outputFrameId = paintedId;
       } catch {
         /* 没静帧也能试视频 */
       }
     }
 
+    const reviewOutput = async (id: string | null, retries: number): Promise<ShotQa> => {
+      if (!id) return heuristicShotQa(refIds.length > 0);
+      if (!llmAd?.chat || !llmEp || !faceId) return { ...heuristicShotQa(refIds.length > 0), retries };
+      const frame = imageBytes(id);
+      const look = imageBytes(faceId);
+      if (!frame || !look) return { ...heuristicShotQa(refIds.length > 0), retries };
+      try {
+        const text = await chatMetered(
+          llmAd,
+          llmEp,
+          {
+            system: "你是短剧质检。只输出 JSON。",
+            prompt: qaReviewPrompt({ visual: shot.visual || shot.imagePrompt, lock: prompt }),
+            images: [frame, look],
+          },
+          { projectId, jobType: "pipeline.qa" },
+        );
+        return parseShotQa(text, retries);
+      } catch {
+        return { ...heuristicShotQa(refIds.length > 0), retries };
+      }
+    };
+
+    const makeVideo = async (text: string) => {
+      if (!videoAd?.generateVideo || !videoEp) return;
+      const result = await videoAd.generateVideo(videoEp.config, {
+        prompt: text,
+        durationSec: durSec,
+        signal: ctx.signal,
+        image: startImage ?? imageBytes(imageAssetId),
+        lastFrame: lastFrameId ? imageBytes(lastFrameId) : undefined,
+        refs,
+        dialogue: shot.line || undefined,
+        audio: Boolean(shot.line),
+      });
+      const asset = storeAsset({
+        type: "video",
+        title: `${bible.title} E${ep.index}-${i + 1}镜`,
+        ext: extFromMime(result.mime, "mp4"),
+        source: "pipeline",
+        projectId,
+        data: result.data,
+      });
+      recordUsage({
+        endpoint: videoEp,
+        projectId,
+        jobType: "pipeline.episode",
+        videoSec: result.durationSec ?? durSec,
+      });
+      videoAssetId = asset.id;
+      if (bins.ffmpeg && bins.ffprobe) {
+        const abs = absInLibrary(asset.path);
+        const info = await probe(bins.ffprobe, abs);
+        const at = Math.max(200, (info?.durationMs ?? durMs) - 240);
+        const tmp = join(directory, "pipeline", `tail-${ep.index}-${i}.jpg`);
+        await videoThumbnail(bins.ffmpeg, abs, tmp, at, ctx.signal);
+        if (existsSync(tmp)) {
+          const tail = storeAsset({
+            type: "image",
+            title: `${bible.title} E${ep.index}-${i + 1}尾帧`,
+            ext: "jpg",
+            source: "pipeline",
+            projectId,
+            fromPath: tmp,
+          });
+          lastFrameId = tail.id;
+          outputFrameId = tail.id;
+        }
+      }
+    };
+
     if (videoAd?.generateVideo && videoEp) {
       try {
-        const result = await videoAd.generateVideo(videoEp.config, {
-          prompt,
-          durationSec: durSec,
-          signal: ctx.signal,
-          image: startImage ?? imageBytes(imageAssetId),
-          lastFrame: lastFrameId ? imageBytes(lastFrameId) : undefined,
-          dialogue: shot.line || undefined,
-          audio: Boolean(shot.line),
-        });
-        const asset = storeAsset({
-          type: "video",
-          title: `${bible.title} E${ep.index}-${i + 1}镜`,
-          ext: extFromMime(result.mime, "mp4"),
-          source: "pipeline",
-          projectId,
-          data: result.data,
-        });
-        recordUsage({
-          endpoint: videoEp,
-          projectId,
-          jobType: "pipeline.episode",
-          videoSec: result.durationSec ?? durSec,
-        });
-        videoAssetId = asset.id;
-        if (bins.ffmpeg && bins.ffprobe) {
-          const abs = absInLibrary(asset.path);
-          const info = await probe(bins.ffprobe, abs);
-          const at = Math.max(200, (info?.durationMs ?? durMs) - 240);
-          const tmp = join(directory, "pipeline", `tail-${ep.index}-${i}.jpg`);
-          await videoThumbnail(bins.ffmpeg, abs, tmp, at, ctx.signal);
-          if (existsSync(tmp)) {
-            const tail = storeAsset({
-              type: "image",
-              title: `${bible.title} E${ep.index}-${i + 1}尾帧`,
-              ext: "jpg",
-              source: "pipeline",
-              projectId,
-              fromPath: tmp,
-            });
-            lastFrameId = tail.id;
-          }
-        }
+        await makeVideo(prompt);
       } catch {
         videoAssetId = null;
         lipSynced = false;
       }
     }
 
+    if (outputFrameId) {
+      qa = await reviewOutput(outputFrameId, 0);
+      if (shouldRetryQa(qa)) {
+        try {
+          ctx.progress(0.08 + ((i + 0.4) / ep.shots.length) * 0.8, `第 ${i + 1} 镜质检没过，重做`);
+          const retryPrompt = `${prompt}\n上一镜漂了：${qa.note}。必须和定妆同一张脸、同一套衣服，禁止换人换景。`;
+          if (videoAd?.generateVideo && videoEp) {
+            await makeVideo(retryPrompt);
+          } else if (imageAd?.generateImage && imageEp) {
+            paintedId = await paintStill(retryPrompt);
+            imageAssetId = paintedId ?? imageAssetId;
+            outputFrameId = paintedId ?? outputFrameId;
+          }
+          qa = await reviewOutput(outputFrameId, 1);
+        } catch {
+          qa = { ...qa, retries: 1 };
+        }
+      }
+    }
+
     if (shot.line.trim()) {
-      const spoken = await speakOne(shot.line, { projectId, endpoint: ttsEp, signal: ctx.signal });
+      const spoken = await speakOne(clipSpokenText(shot.line, durMs), { projectId, endpoint: ttsEp, signal: ctx.signal });
       if (spoken) audioAssetId = spoken.assetId;
     }
 
@@ -289,6 +376,7 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       audioAssetId,
       lipSynced,
       lipsNote,
+      qa,
     });
     cursor += durMs;
   }
@@ -323,17 +411,49 @@ export const renderEpisodeHandler: JobHandler = async (job, ctx) => {
       proj.seriesId,
     ]);
   }
-  const withMusic = bible.bgmAssetId ? layBgm(doc, bible.bgmAssetId) : doc;
+  let lined = bible.bgmAssetId ? layBgm(doc, bible.bgmAssetId) : doc;
+  if (bible.ambienceAssetId) lined = layAmbience(lined, bible.ambienceAssetId);
+  const talk = shots
+    .map((s, idx) => ({
+      startMs: doc.tracks.find((t) => t.type === "video")?.clips[idx]?.startMs ?? 0,
+      endMs: (doc.tracks.find((t) => t.type === "video")?.clips[idx]?.startMs ?? 0) + shotDurationSec(s) * 1000,
+      line: s.line,
+      cue: s.sfxCue,
+    }))
+    .filter((s) => s.line.trim());
+  if (bible.bgmAssetId && talk.length) {
+    lined = duckBgm(
+      lined,
+      talk.map((s) => ({ startMs: s.startMs, endMs: s.endMs })),
+    );
+  }
+  const hits = shots
+    .map((s, idx) => {
+      if (!s.sfxCue) return null;
+      const asset = findSfxAsset(s.sfxCue);
+      if (!asset) return null;
+      return {
+        startMs: doc.tracks.find((t) => t.type === "video")?.clips[idx]?.startMs ?? 0,
+        assetId: asset.id,
+        durationMs: 1400,
+      };
+    })
+    .filter((x): x is NonNullable<typeof x> => Boolean(x));
+  if (hits.length) lined = laySfxHits(lined, hits);
+  const qaMissed = shots.filter((s) => s.qa && !s.qa.ok).length;
   mkdirSync(join(directory, "timeline"), { recursive: true });
-  writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(withMusic, null, 2));
+  writeFileSync(join(directory, "timeline", "main.json"), JSON.stringify(lined, null, 2));
 
   ctx.progress(
     1,
-    lipsMissed
-      ? `${lipsMissed} 镜对口型没过，原视频还在，没有改成静帧`
-      : bible.bgmAssetId
-        ? "这一集已装上时间线，对口型和配乐都铺了"
-        : "这一集已装上时间线，对口型过了",
+    [
+      lipsMissed ? `${lipsMissed} 镜对口型没过，原视频还在` : "对口型过了",
+      qaMissed ? `${qaMissed} 镜质检没过` : "质检过了",
+      bible.bgmAssetId ? "配乐已压过人声" : "",
+      bible.ambienceAssetId ? "环境底铺了" : "",
+    ]
+      .filter(Boolean)
+      .join("，"),
   );
   return {
     projectId,

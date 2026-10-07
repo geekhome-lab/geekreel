@@ -61,6 +61,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
   const [selected, setSelected] = useState<string | null>(null); // clipId
   const [picking, setPicking] = useState(false);
   const [pickingBgm, setPickingBgm] = useState(false);
+  const [pickingAmb, setPickingAmb] = useState(false);
   const [draftHint, setDraftHint] = useState("");
   const [editingSub, setEditingSub] = useState<string | null>(null);
   const [exportJob, setExportJob] = useState<{ id: string; status: string; assetId?: string; error?: string } | null>(null);
@@ -332,7 +333,7 @@ function TimelineEditor({ projectId }: { projectId: string }) {
           {lipsNotes.length} 镜对口型没过。原视频还在，没有改成静帧。{lipsNotes[0]?.lipsNote}
         </p>
       ) : null}
-      <p className="mb-2 text-[11px] text-fg-faint">出片后画面和字幕会自动装上。配音要在这里选音色、试听，再铺上。</p>
+      <p className="mb-2 text-[11px] text-fg-faint">出片后画面和字幕会自动装上。对白先配音再对嘴；旁白只铺声，不对口型。</p>
       {doc.tracks.find((t) => t.type === "video")?.clips.length ? (
         <VoicePicker
           projectId={projectId}
@@ -389,6 +390,20 @@ function TimelineEditor({ projectId }: { projectId: string }) {
         </ToolBtn>
         <ToolBtn onClick={() => setPicking(true)}>{iconPlus({ width: 12, height: 12 })} 添加素材</ToolBtn>
         <ToolBtn onClick={() => setPickingBgm(true)}>铺配乐</ToolBtn>
+        <ToolBtn onClick={() => setPickingAmb(true)}>铺环境底</ToolBtn>
+        <ToolBtn
+          onClick={async () => {
+            try {
+              const r = await apiJson<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}/duck`, "post");
+              setDoc(r.doc);
+              setSaveState("saved");
+            } catch (e) {
+              setTtsError(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        >
+          人声压配乐
+        </ToolBtn>
         <ToolBtn
           onClick={async () => {
             try {
@@ -623,6 +638,24 @@ function TimelineEditor({ projectId }: { projectId: string }) {
             setPickingBgm(false);
             try {
               const r = await apiJson<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}/bgm`, "post", {
+                assetId: a.id,
+              });
+              setDoc(r.doc);
+              setSaveState("saved");
+            } catch (e) {
+              setTtsError(e instanceof Error ? e.message : String(e));
+            }
+          }}
+        />
+      )}
+      {pickingAmb && (
+        <AssetPickerModal
+          accept={["audio"]}
+          onClose={() => setPickingAmb(false)}
+          onSelect={async (a) => {
+            setPickingAmb(false);
+            try {
+              const r = await apiJson<{ doc: TimelineDoc }>(`/api/timeline/project/${projectId}/ambience`, "post", {
                 assetId: a.id,
               });
               setDoc(r.doc);

@@ -1,7 +1,7 @@
 import type { CharacterDossier, DramaAssetItem, EntityKind, EntityView, EntityViewKind } from "@vw/core";
 import { getAdapter } from "@vw/models";
-import { mergeEntityViews, primaryEntityImage, viewPrompt, viewsForKind } from "@vw/pipeline";
-import { storeAsset, updateAssetMeta } from "./library";
+import { matchLibraryEntity, mergeEntityViews, primaryEntityImage, viewPrompt, viewsForKind } from "@vw/pipeline";
+import { findNamedEntityAssets, storeAsset, updateAssetMeta } from "./library";
 import { resolveEndpoint } from "./models";
 import { recordUsage } from "./usage";
 
@@ -17,7 +17,15 @@ export async function paintViews(opts: {
   skipIfDone?: boolean;
 }): Promise<{ imageAssetId: string | null; views: EntityView[] }> {
   const wanted = viewsForKind(opts.kind);
-  const existing = opts.current ?? [];
+  let existing = opts.current ?? [];
+  const reused = matchLibraryEntity({
+    name: opts.name,
+    kind: opts.kind,
+    assets: findNamedEntityAssets(opts.kind, opts.name),
+  });
+  if (reused) {
+    for (const v of reused.views) existing = mergeEntityViews(existing, v);
+  }
   if (opts.skipIfDone && wanted.every((k) => existing.some((v) => v.kind === k && v.assetId))) {
     return { imageAssetId: primaryEntityImage({ imageAssetId: opts.imageAssetId, views: existing }), views: existing };
   }
@@ -42,7 +50,7 @@ export async function paintViews(opts: {
       projectId: opts.projectId,
       data: still.data,
     });
-    updateAssetMeta(asset.id, { kind: opts.kind });
+    updateAssetMeta(asset.id, { kind: opts.kind, tags: [opts.name] });
     recordUsage({ endpoint, projectId: opts.projectId, jobType: "entity.views", images: 1 });
     views = mergeEntityViews(views, { kind, assetId: asset.id });
   }

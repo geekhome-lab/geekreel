@@ -6,7 +6,7 @@
 
 import { dashscopeGenerateImage, isDashScope } from "./dashscopeImage";
 import { dashscopeGenerateSpeech, isDashScopeTts } from "./dashscopeTts";
-import { dashscopeGenerateVideo } from "./dashscopeVideo";
+import { dashscopeGenerateVideo, dashscopeLipSync } from "./dashscopeVideo";
 export { wanVideoChunks, snapWanDuration, wanDurationCap } from "./dashscopeVideo";
 import { openaiGenerateVideo } from "./openaiVideo";
 import { originRoot } from "./local";
@@ -26,6 +26,10 @@ export function endpointOptionLabel(ep: { name: string; config: Record<string, s
   if (model && !ep.name.includes(model)) return `${ep.name} · ${model}`;
   return ep.name;
 }
+
+export type { ImageBlob, ImageGenRequest, VideoGenRequest } from "./blobs";
+export { collectVideoImages } from "./blobs";
+import type { ImageGenRequest, VideoGenRequest } from "./blobs";
 
 export interface FieldSpec {
   key: string;
@@ -112,32 +116,18 @@ export interface ModelAdapter {
       images?: Array<{ mime: string; data: Uint8Array }>;
     },
   ): Promise<ChatResult>;
-  generateImage?(
-    config: Record<string, string>,
-    req: { prompt: string; size?: string; signal?: AbortSignal },
-  ): Promise<ImageGenResult>;
+  generateImage?(config: Record<string, string>, req: ImageGenRequest): Promise<ImageGenResult>;
   generateSpeech?(
     config: Record<string, string>,
     req: { text: string; voice?: string; signal?: AbortSignal },
   ): Promise<SpeechResult>;
-  generateVideo?(
-    config: Record<string, string>,
-    req: {
-      prompt: string;
-      durationSec?: number;
-      signal?: AbortSignal;
-      image?: { mime: string; data: Uint8Array };
-      lastFrame?: { mime: string; data: Uint8Array };
-      dialogue?: string;
-      audio?: boolean;
-      voice?: { mime: string; data: Uint8Array };
-    },
-  ): Promise<VideoGenResult>;
+  generateVideo?(config: Record<string, string>, req: VideoGenRequest): Promise<VideoGenResult>;
   /** 视频出来后再对嘴。没有就用 generateVideo + 配音。 */
   lipSync?(
     config: Record<string, string>,
     req: {
       image?: { mime: string; data: Uint8Array };
+      video?: { mime: string; data: Uint8Array };
       audio: { mime: string; data: Uint8Array };
       text?: string;
       durationSec?: number;
@@ -327,6 +317,13 @@ export const openaiCompatible: ModelAdapter = {
       n: 1,
     };
     if (req.size) body.size = req.size;
+    if (req.refs?.[0] && /gpt-image/i.test(config.model ?? "")) {
+      body.image = `data:${req.refs[0].mime || "image/png"};base64,${
+        typeof Buffer !== "undefined"
+          ? Buffer.from(req.refs[0].data).toString("base64")
+          : btoa(Array.from(req.refs[0].data, (b) => String.fromCharCode(b)).join(""))
+      }`;
+    }
 
     const res = await openaiFetch(config, "/images/generations", {
       method: "POST",
@@ -412,6 +409,9 @@ export const openaiCompatible: ModelAdapter = {
   },
 
   async lipSync(config, req) {
+    if (isDashScope(config.baseUrl ?? "")) {
+      return dashscopeLipSync(config, req);
+    }
     const prompt = req.text?.trim()
       ? `角色对着镜头说：「${req.text.trim()}」。嘴型必须对上这句，能出声就一起出声。`
       : "对着镜头说话，嘴型对齐配音。";

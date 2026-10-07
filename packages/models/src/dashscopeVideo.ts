@@ -1,4 +1,5 @@
 import { dashscopeOrigin } from "./dashscopeImage";
+import { collectVideoImages, type VideoGenRequest } from "./blobs";
 import type { VideoGenResult } from "./index";
 
 function bytesToBase64(data: Uint8Array): string {
@@ -77,19 +78,117 @@ async function sleep(ms: number, signal?: AbortSignal) {
 /** 通义万相视频：提交异步任务再轮询。OpenAI /videos 这条路是 404。 */
 export async function dashscopeGenerateVideo(
   config: Record<string, string>,
-  req: {
-    prompt: string;
-    durationSec?: number;
-    signal?: AbortSignal;
-    image?: { mime: string; data: Uint8Array };
-    lastFrame?: { mime: string; data: Uint8Array };
-  },
+  req: VideoGenRequest,
 ): Promise<VideoGenResult> {
   const origin = dashscopeOrigin(config.baseUrl ?? "");
-  const model = pickWanVideoModel(config.model || "wan2.2-t2v-plus", Boolean(req.image));
+  const refs = collectVideoImages(req);
+  const model = pickWanVideoModel(config.model || "wan2.2-t2v-plus", refs.length > 0);
+  const wanExtra: Record<string, unknown> = {};
   const input: Record<string, unknown> = { prompt: req.prompt };
-  if (req.image) input.img_url = dataUri(req.image);
+  if (refs[0]) input.img_url = dataUri(refs[0]);
   if (req.lastFrame) input.last_img_url = dataUri(req.lastFrame);
+  else if (refs[1]) input.last_img_url = dataUri(refs[1]);
+  if (refs.length > 1 && /wan2\.[6-9]|wan2\.[1-9]\d|seedance/i.test(model)) {
+    input.reference_images = refs.slice(0, 9).map(dataUri);
+  }
+  if (req.voice?.data?.length) input.audio_url = dataUri(req.voice);
+  if (req.dialogue?.trim()) input.prompt = `${req.prompt}\n角色对着镜头说：「${req.dialogue.trim()}」。嘴型必须对上这句。`;
+  if (req.audio && /wan2\.[5-9]|wan2\.[1-9]\d/i.test(model)) {
+    Object.assign(wanExtra, { audio: true });
+  }
+
+  const parameters = { ...wanVideoParams(model, req.durationSec), ...wanExtra };
+  const submit = await fetch(`${origin}/api/v1/services/aigc/video-generation/video-synthesis`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${config.apiKey ?? ""}`,
+      "X-DashScope-Async": "enable",
+    },
+    body: JSON.stringify({
+      model,
+      input,
+      parameters,
+    }),
+    signal: req.signal ?? null,
+  });
+  const created = (await submit.json().catch(() => ({}))) as {
+    code?: string;
+    message?: string;
+    output?: { task_id?: string; message?: string };
+  };
+  if (!submit.ok || created.code) {
+    throw new Error(created.output?.message || created.message || created.code || `HTTP ${submit.status}`);
+  }
+  const taskId = created.output?.task_id;
+  if (!taskId) throw new Error("通义万相视频没有返回任务号，核对一下模型名");
+  return pollDashscopeVideo(origin, config.apiKey ?? "", taskId, snapWanDuration(model, req.durationSec), req.signal);
+}
+
+async function pollDashscopeVideo(
+  origin: string,
+  apiKey: string,
+  taskId: string,
+  durationSec: number,
+  signal?: AbortSignal,
+): Promise<VideoGenResult> {
+  const deadline = Date.now() + 6 * 60_000;
+  while (Date.now() < deadline) {
+    await sleep(4000, signal);
+    const poll = await fetch(`${origin}/api/v1/tasks/${taskId}`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: signal ?? null,
+    });
+    if (!poll.ok) throw new Error(`查询视频任务失败：HTTP ${poll.status}`);
+    const json = (await poll.json()) as {
+      message?: string;
+      output?: { task_status?: string; message?: string; video_url?: string };
+    };
+    const status = json.output?.task_status;
+    if (status === "SUCCEEDED") {
+      const url = json.output?.video_url;
+      if (!url) throw new Error("通义万相视频成功了但没给文件");
+      const bin = await fetch(url, { signal: signal ?? null });
+      if (!bin.ok) throw new Error(`下载视频失败：HTTP ${bin.status}`);
+      return {
+        data: new Uint8Array(await bin.arrayBuffer()),
+        mime: bin.headers.get("content-type") || "video/mp4",
+        durationSec,
+      };
+    }
+    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
+      throw new Error(json.output?.message || json.message || "通义万相视频生成失败");
+    }
+  }
+  throw new Error("通义万相视频超时。到任务中心看进度，或过一会儿再试。");
+}
+
+/** 用配音驱动嘴型：有成片就对现成视频改嘴，没有就拿静帧说话。 */
+export async function dashscopeLipSync(
+  config: Record<string, string>,
+  req: {
+    image?: { mime: string; data: Uint8Array };
+    video?: { mime: string; data: Uint8Array };
+    audio: { mime: string; data: Uint8Array };
+    text?: string;
+    durationSec?: number;
+    signal?: AbortSignal;
+  },
+): Promise<VideoGenResult> {
+  if (!req.audio?.data?.length) throw new Error("对口型需要配音");
+  const origin = dashscopeOrigin(config.baseUrl ?? "");
+  const input: Record<string, unknown> = { audio_url: dataUri(req.audio) };
+  let model = (config.lipSyncModel || "").trim();
+  if (req.video?.data?.length && req.video.data.length <= 12 * 1024 * 1024) {
+    input.video_url = dataUri(req.video);
+    if (!model) model = "videoretalk";
+  } else if (req.image?.data?.length) {
+    input.img_url = dataUri(req.image);
+    if (!model) model = pickWanVideoModel(config.model || "wan2.2-t2v-plus", true);
+  } else {
+    throw new Error("对口型需要成片或一张有脸的静帧");
+  }
+  if (req.text?.trim()) input.prompt = `嘴型对齐这句话：「${req.text.trim()}」。能出声就一起出声。`;
 
   const submit = await fetch(`${origin}/api/v1/services/aigc/video-generation/video-synthesis`, {
     method: "POST",
@@ -114,35 +213,6 @@ export async function dashscopeGenerateVideo(
     throw new Error(created.output?.message || created.message || created.code || `HTTP ${submit.status}`);
   }
   const taskId = created.output?.task_id;
-  if (!taskId) throw new Error("通义万相视频没有返回任务号，核对一下模型名");
-
-  const deadline = Date.now() + 6 * 60_000;
-  while (Date.now() < deadline) {
-    await sleep(4000, req.signal);
-    const poll = await fetch(`${origin}/api/v1/tasks/${taskId}`, {
-      headers: { Authorization: `Bearer ${config.apiKey ?? ""}` },
-      signal: req.signal ?? null,
-    });
-    if (!poll.ok) throw new Error(`查询视频任务失败：HTTP ${poll.status}`);
-    const json = (await poll.json()) as {
-      message?: string;
-      output?: { task_status?: string; message?: string; video_url?: string };
-    };
-    const status = json.output?.task_status;
-    if (status === "SUCCEEDED") {
-      const url = json.output?.video_url;
-      if (!url) throw new Error("通义万相视频成功了但没给文件");
-      const bin = await fetch(url, { signal: req.signal ?? null });
-      if (!bin.ok) throw new Error(`下载视频失败：HTTP ${bin.status}`);
-      return {
-        data: new Uint8Array(await bin.arrayBuffer()),
-        mime: bin.headers.get("content-type") || "video/mp4",
-        durationSec: snapWanDuration(model, req.durationSec),
-      };
-    }
-    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
-      throw new Error(json.output?.message || json.message || "通义万相视频生成失败");
-    }
-  }
-  throw new Error("通义万相视频超时。到任务中心看进度，或过一会儿再试。");
+  if (!taskId) throw new Error("对口型没有返回任务号");
+  return pollDashscopeVideo(origin, config.apiKey ?? "", taskId, req.durationSec || 5, req.signal);
 }
