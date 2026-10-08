@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { mkdirSync } from "node:fs";
 
 export const version = "0.1.1";
@@ -16,4 +17,4 @@ export const dbPath = join(dataDir, "vw.db");
 export const defaultLibraryRoot = join(homedir(), "VideoWorkbench");
 
 /** web 构建产物（生产模式下由 server 托管） */
-export const webDist = new URL("../../web/dist", import.meta.url).pathname;
+export const webDist = fileURLToPath(new URL("../../web/dist", import.meta.url));

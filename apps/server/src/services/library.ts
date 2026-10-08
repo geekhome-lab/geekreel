@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, copyFileSync, linkSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import {
   assetWorkFolder,
   assetWorkLabel,
@@ -13,6 +13,7 @@ import {
 } from "@vw/core";
 import { defaultLibraryRoot } from "../config";
 import { db, getSetting, setSetting } from "../db";
+import { isInsideRoot } from "../lib/paths";
 import { newId, now } from "../lib/resp";
 import { jobQueue } from "../jobs/queue";
 import { wsHub } from "../ws";
@@ -36,7 +37,7 @@ export function setLibraryRoot(root: string) {
 export function absInLibrary(rel: string): string {
   const root = resolve(libraryRoot());
   const abs = resolve(join(root, rel));
-  if (abs !== root && !abs.startsWith(root + sep)) throw new Error("路径越界");
+  if (!isInsideRoot(abs, root)) throw new Error("路径越界");
   return abs;
 }
 

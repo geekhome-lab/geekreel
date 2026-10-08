@@ -17,7 +17,7 @@ import {
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { AnalysisReportDoc, RemakeTemplateDoc } from "@vw/core";
-import { runFfmpeg } from "@vw/media";
+import { runFfmpeg, whichBin } from "@vw/media";
 
 export type { VideoCopy } from "./copy";
 export { dumpYtdlpMeta, extractCopyFromHtml, extractDouyinId, extractHashtags, fetchVideoCopy } from "./copy";
@@ -152,13 +152,7 @@ export interface YtdlpBin {
 let ytdlpCached: YtdlpBin | null = null;
 
 function which(name: string): string | null {
-  try {
-    const proc = Bun.spawnSync(["/usr/bin/which", name], { stdout: "pipe", stderr: "ignore" });
-    const out = proc.stdout.toString().trim();
-    return proc.exitCode === 0 && out && existsSync(out) ? out : null;
-  } catch {
-    return null;
-  }
+  return whichBin(name);
 }
 
 function vendorPlatformStamp(): string {
@@ -200,11 +194,17 @@ export function detectYtdlp(force = false): YtdlpBin {
   if (bundled) return (ytdlpCached = { bin: bundled, source: "bundled" });
   const pathHit = which("yt-dlp");
   if (pathHit && looksLikeStandaloneBinary(pathHit)) return (ytdlpCached = { bin: pathHit, source: "path" });
+  const ytName = process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp";
+  const local = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+  const choco = process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey";
   const common = [
-    join(homedir(), ".local/bin/yt-dlp"),
+    join(homedir(), ".local", "bin", "yt-dlp"),
     "/opt/homebrew/bin/yt-dlp",
     "/usr/local/bin/yt-dlp",
     "/usr/bin/yt-dlp",
+    join(homedir(), "scoop", "shims", ytName),
+    join(local, "Microsoft", "WinGet", "Links", ytName),
+    join(choco, "bin", ytName),
   ].find((p) => existsSync(p) && looksLikeStandaloneBinary(p));
   if (common) return (ytdlpCached = { bin: common, source: "common" });
   return (ytdlpCached = { bin: null, source: "none" });

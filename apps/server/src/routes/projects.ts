@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { isAbsolutePath, isForbiddenProjectDir } from "../lib/paths";
 import { sanitizeTitle, type Project, type ScriptDoc, type SeriesKind } from "@vw/core";
 import { db } from "../db";
 import { err, newId, now, ok } from "../lib/resp";
@@ -41,11 +42,11 @@ projectsRoutes.post("/", async (c) => {
   const directory = body.directory?.trim();
   if (!name) return err(c, "请填写项目名称");
   if (!directory) return err(c, "请选择项目目录");
-  if (!directory.startsWith("/")) return err(c, "项目目录须为绝对路径");
+  if (!isAbsolutePath(directory)) return err(c, "项目目录须为绝对路径");
 
   const dir = resolve(directory);
   // 防呆：不允许把家目录/磁盘根目录当项目目录（会在里面建 canvas/pipeline/export 子目录）
-  if (dir === homedir() || dir === "/" || dir === resolve("/")) {
+  if (isForbiddenProjectDir(dir, homedir())) {
     return err(c, "不能直接用家目录或根目录当项目目录，请新建一个子文件夹");
   }
   const marker = join(dir, "project.vw.json");

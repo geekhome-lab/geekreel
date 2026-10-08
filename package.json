@@ -8,13 +8,13 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "bun run --filter '@vw/web' --filter '@vw/server' dev",
-    "dev:server": "bun run --filter '@vw/server' dev",
-    "dev:web": "bun run --filter '@vw/web' dev",
-    "build": "bun run --filter '@vw/web' build",
-    "start": "bun run --filter '@vw/server' start",
-    "typecheck": "bun run --filter '@vw/*' typecheck",
-    "postinstall": "bun run --filter @vw/analyze install:bin"
+    "dev": "bun run --filter=@vw/web --filter=@vw/server dev",
+    "dev:server": "bun run --filter=@vw/server dev",
+    "dev:web": "bun run --filter=@vw/web dev",
+    "build": "bun run --filter=@vw/web build",
+    "start": "bun run --filter=@vw/server start",
+    "typecheck": "bun run --filter=@vw/* typecheck",
+    "postinstall": "bun run --filter=@vw/analyze install:bin"
   },
   "devDependencies": {
     "@types/bun": "^1.2.0",

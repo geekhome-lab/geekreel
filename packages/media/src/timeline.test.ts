@@ -1,10 +1,11 @@
 import { afterAll, expect, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyTimelineDoc, formatSrt } from "@vw/core";
 import { buildRenderPlan, detectBins, executeRender, probe } from "./index";
 
-const tmp = join("/tmp", `vw-m3-e2e-${process.pid}`);
+const tmp = join(tmpdir(), `vw-m3-e2e-${process.pid}`);
 
 afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
@@ -54,6 +55,33 @@ test("buildRenderPlan：静帧 + 字幕生成 loop 输入与 concat", () => {
   expect(plan.args).toContain("-loop");
   expect(plan.args).toContain("-t");
   expect(plan.args.join(" ")).toContain("concat=n=1");
+});
+
+test("Windows 字幕路径在滤镜里转义盘符冒号", () => {
+  const doc = emptyTimelineDoc();
+  doc.tracks[0]!.clips.push({
+    id: "c1",
+    assetId: "img1",
+    startMs: 0,
+    inMs: 0,
+    outMs: 1000,
+    volume: 1,
+  });
+  doc.tracks[2]!.clips.push({
+    id: "s1",
+    text: "你好",
+    startMs: 0,
+    inMs: 0,
+    outMs: 1000,
+    volume: 1,
+  });
+  const plan = buildRenderPlan(
+    doc,
+    new Map([["img1", { absPath: "C:\\tmp\\a.png", hasAudio: false, isStill: true }]]),
+    { srtPath: "C:\\Users\\a\\subs.srt", burnSubs: true, outPath: "C:\\tmp\\out.mp4" },
+  );
+  const fc = plan.args[plan.args.indexOf("-filter_complex") + 1] ?? "";
+  expect(fc).toContain("subtitles='C\\:\\\\Users\\\\a\\\\subs.srt'");
 });
 
 test("buildRenderPlan：变速和淡入淡出会进滤镜", () => {

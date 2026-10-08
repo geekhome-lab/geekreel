@@ -183,13 +183,25 @@ GeekReel AI Studio 跑在你自己的机器上。没有账号，没有云端成�
 
 ## 快速开始
 
-**环境**：已安装 [Bun](https://bun.sh)（1.2+）。macOS 已验证。Linux 在 `bun install` 时会按平台补 yt-dlp。不要依赖 Homebrew / pipx 里的 ffmpeg 或 yt-dlp。
+**环境**：已安装 [Bun](https://bun.sh)（1.2+）。macOS / Windows / Linux 可跑。`bun install` 会按当前系统补 yt-dlp；ffmpeg 用项目依赖。不要依赖 Homebrew / pipx / scoop 包装脚本。
+
+macOS / Linux：
 
 ```bash
 git clone https://github.com/geekhome-lab/geekreel.git
 cd geekreel
 ./scripts/dev.sh
 ```
+
+Windows（cmd 或 PowerShell）：
+
+```bat
+git clone https://github.com/geekhome-lab/geekreel.git
+cd geekreel
+scripts\dev.cmd
+```
+
+也可以 `bun install` 之后直接 `bun run dev`。
 
 - 网页：[http://127.0.0.1:5473](http://127.0.0.1:5473)
 - API / WebSocket：[http://127.0.0.1:4780](http://127.0.0.1:4780)（开发态由 Vite 代理 `/api` 与 `/ws`）
@@ -200,6 +212,8 @@ cd geekreel
 ./scripts/start.sh
 ```
 
+Windows：`scripts\start.cmd`。
+
 浏览器打开 [http://127.0.0.1:4780](http://127.0.0.1:4780)。
 
 第一次打开：到 **模型** 页加上文本、图片、视频（配音可选）端点，再回首页写想法。没有密钥时界面会引导去配置，而不是甩一堆报错栈。
@@ -208,15 +222,15 @@ cd geekreel
 
 | 路径                    | 内容                                        |
 | --------------------- | ----------------------------------------- |
-| `~/.video-workbench/` | SQLite、加密密钥、雷达缓存、风格包索引                    |
-| `~/VideoWorkbench/`   | 默认资产库（设置里可改，改时可选迁移）                       |
+| `~/.video-workbench/` | SQLite、加密密钥、雷达缓存、风格包索引（Windows 在 `%USERPROFILE%\.video-workbench`） |
+| `~/VideoWorkbench/`   | 默认资产库（设置里可改，改时可选迁移；Windows 在 `%USERPROFILE%\VideoWorkbench`） |
 | 项目目录                  | `project.vw.json`、画布快照、流水线状态、`export/` 成片 |
 
 端口可用环境变量覆盖：`VW_HOST`、`VW_PORT`（默认 `127.0.0.1:4780`）。ffmpeg 可用 `VW_FFMPEG` 覆盖自带二进制。
 
 ### 换机器
 
-整份仓库拷走。`./scripts/dev.sh` 或 `./scripts/start.sh` 会 `bun install` 并使用仓库内的 ffmpeg / yt-dlp。数据在 `~/.video-workbench` 与资产库目录，需要的话一并拷。风格包 zip 可在风格中心导出后再上传。
+整份仓库拷走。`./scripts/dev.sh` / `scripts\dev.cmd` 或 `./scripts/start.sh` / `scripts\start.cmd` 会 `bun install` 并使用仓库内的 ffmpeg / yt-dlp。数据在 `~/.video-workbench` 与资产库目录，需要的话一并拷。风格包 zip 可在风格中心导出后再上传。
 
 ## 仓库结构
 
@@ -429,13 +443,25 @@ A project is a local folder. Canvas wires text / episode / scene / shot / image 
 
 ## Quick start
 
-Requires [Bun](https://bun.sh) 1.2+. Verified on macOS. `bun install` fetches a matching yt-dlp for the current OS. Do not depend on Homebrew or pipx copies of ffmpeg / yt-dlp.
+Requires [Bun](https://bun.sh) 1.2+. Runs on macOS, Windows, and Linux. `bun install` fetches a matching yt-dlp for the current OS. Do not depend on Homebrew, pipx, or scoop wrapper scripts for ffmpeg / yt-dlp.
+
+macOS / Linux:
 
 ```bash
 git clone https://github.com/geekhome-lab/geekreel.git
 cd geekreel
 ./scripts/dev.sh
 ```
+
+Windows (cmd or PowerShell):
+
+```bat
+git clone https://github.com/geekhome-lab/geekreel.git
+cd geekreel
+scripts\dev.cmd
+```
+
+Or `bun install` then `bun run dev`.
 
 - UI: [http://127.0.0.1:5473](http://127.0.0.1:5473)
 - API / WS: [http://127.0.0.1:4780](http://127.0.0.1:4780) (Vite proxies `/api` and `/ws` in dev)
@@ -446,12 +472,14 @@ Production-style (build the web app, then serve it from the API process):
 ./scripts/start.sh
 ```
 
+Windows: `scripts\start.cmd`.
+
 Open [http://127.0.0.1:4780](http://127.0.0.1:4780). Add text / image / video endpoints on **Models** before you expect a finished clip. The UI points you there if keys are missing.
 
 | Path                  | Role                                        |
 | --------------------- | ------------------------------------------- |
-| `~/.video-workbench/` | SQLite, encrypted keys, radar cache         |
-| `~/VideoWorkbench/`   | Default library (changeable, migratable)    |
+| `~/.video-workbench/` | SQLite, encrypted keys, radar cache (Windows: `%USERPROFILE%\.video-workbench`) |
+| `~/VideoWorkbench/`   | Default library (changeable, migratable; Windows: `%USERPROFILE%\VideoWorkbench`) |
 | Project folder        | Metadata, canvas, pipeline state, `export/` |
 
 Override bind address with `VW_HOST` / `VW_PORT`. Override ffmpeg with `VW_FFMPEG`.

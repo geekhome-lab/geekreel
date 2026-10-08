@@ -35,9 +35,13 @@ function collectMedia(doc: TimelineDoc): JianyingMedia[] {
 }
 
 function jianyingUserDrafts(): string | null {
+  const local = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
   const candidates = [
-    join(homedir(), "Movies/JianyingPro/User Data/Projects/com.lveditor.draft"),
-    join(homedir(), "Movies/CapCut/User Data/Projects/com.lveditor.draft"),
+    join(homedir(), "Movies", "JianyingPro", "User Data", "Projects", "com.lveditor.draft"),
+    join(homedir(), "Movies", "CapCut", "User Data", "Projects", "com.lveditor.draft"),
+    join(local, "JianyingPro", "User Data", "Projects", "com.lveditor.draft"),
+    join(local, "CapCut", "User Data", "Projects", "com.lveditor.draft"),
+    join(local, "CapCut", "User Data", "CapCut Drafts"),
   ];
   return candidates.find((p) => existsSync(p)) ?? null;
 }

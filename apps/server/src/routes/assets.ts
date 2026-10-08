@@ -3,6 +3,7 @@ import { existsSync, statSync } from "node:fs";
 import type { SQLQueryBindings } from "bun:sqlite";
 import { assetTypeFromExt, extFromFileName, mimeFromExt, type AssetKind, type AssetType } from "@vw/core";
 import { db } from "../db";
+import { revealInFileManager } from "../lib/openPath";
 import { err, ok } from "../lib/resp";
 import {
   absInLibrary,
@@ -191,12 +192,7 @@ assetsRoutes.post("/:id/reveal", (c) => {
   if (!asset) return err(c, "资产不存在", 404);
   const abs = absInLibrary(asset.path);
   if (!existsSync(abs)) return err(c, "文件不存在", 404);
-  const proc =
-    process.platform === "darwin"
-      ? Bun.spawn(["open", "-R", abs])
-      : process.platform === "win32"
-        ? Bun.spawn(["explorer", `/select,${abs}`])
-        : Bun.spawn(["xdg-open", abs]);
+  const proc = revealInFileManager(abs, true);
   return ok(c, { opened: true, pid: proc.pid });
 });
 

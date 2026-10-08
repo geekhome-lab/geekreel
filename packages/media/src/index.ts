@@ -6,11 +6,14 @@
 
 /// <reference path="./types.d.ts" />
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import ffmpegStaticPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
+import { exeName, whichBin } from "./which";
 
 export * from "./timeline";
+export { whichBin } from "./which";
 
 export interface MediaBins {
   ffmpeg: string | null;
@@ -22,14 +25,29 @@ export interface MediaBins {
 
 let cached: MediaBins | null = null;
 
-async function whichOk(name: string): Promise<string | null> {
-  try {
-    const proc = Bun.spawnSync(["/usr/bin/which", name], { stdout: "pipe", stderr: "ignore" });
-    const out = proc.stdout.toString().trim();
-    return proc.exitCode === 0 && out ? out : null;
-  } catch {
-    return null;
+/** 真实二进制；丢掉 ffmpeg-static 偶尔给出的 .js 入口 */
+function usableBin(p: string | null | undefined): string | null {
+  if (!p || !existsSync(p)) return null;
+  if (/\.(js|mjs|cjs)$/i.test(p)) return null;
+  return p;
+}
+
+function commonBinDirs(): string[] {
+  if (process.platform === "win32") {
+    const pf = process.env.ProgramFiles || "C:\\Program Files";
+    const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const local = process.env.LOCALAPPDATA || join(homedir(), "AppData", "Local");
+    const choco = process.env.ChocolateyInstall || "C:\\ProgramData\\chocolatey";
+    return [
+      join(pf, "ffmpeg", "bin"),
+      join(pf86, "ffmpeg", "bin"),
+      join(local, "Microsoft", "WinGet", "Links"),
+      join(choco, "bin"),
+      join(homedir(), "scoop", "shims"),
+      join(homedir(), "scoop", "apps", "ffmpeg", "current", "bin"),
+    ];
   }
+  return ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
 }
 
 export async function detectBins(force = false): Promise<MediaBins> {
@@ -48,22 +66,23 @@ export async function detectBins(force = false): Promise<MediaBins> {
   }
 
   // 项目自带优先：换机器不用装 ffmpeg
-  const bundledFfmpeg = ffmpegStaticPath && existsSync(ffmpegStaticPath) ? ffmpegStaticPath : null;
-  const bundledFfprobe = ffprobeStatic.path && existsSync(ffprobeStatic.path) ? ffprobeStatic.path : null;
+  const bundledFfmpeg = usableBin(ffmpegStaticPath);
+  const bundledFfprobe = usableBin(ffprobeStatic.path);
   if (bundledFfmpeg) {
     cached = { ffmpeg: bundledFfmpeg, ffprobe: bundledFfprobe, source: "bundled", available: true };
     return cached;
   }
 
-  const [pathFfmpeg, pathFfprobe] = await Promise.all([whichOk("ffmpeg"), whichOk("ffprobe")]);
+  const pathFfmpeg = whichBin("ffmpeg");
+  const pathFfprobe = whichBin("ffprobe");
   if (pathFfmpeg) {
     cached = { ffmpeg: pathFfmpeg, ffprobe: pathFfprobe, source: "path", available: true };
     return cached;
   }
 
-  const commonDirs = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"];
-  const foundFfmpeg = commonDirs.map((d) => join(d, "ffmpeg")).find((p) => existsSync(p)) ?? null;
-  const foundFfprobe = commonDirs.map((d) => join(d, "ffprobe")).find((p) => existsSync(p)) ?? null;
+  const commonDirs = commonBinDirs();
+  const foundFfmpeg = commonDirs.map((d) => join(d, exeName("ffmpeg"))).find((p) => existsSync(p)) ?? null;
+  const foundFfprobe = commonDirs.map((d) => join(d, exeName("ffprobe"))).find((p) => existsSync(p)) ?? null;
   if (foundFfmpeg) {
     cached = { ffmpeg: foundFfmpeg, ffprobe: foundFfprobe, source: "common", available: true };
     return cached;
@@ -90,7 +109,7 @@ export async function probe(ffprobeBin: string, file: string): Promise<ProbeResu
   try {
     const proc = Bun.spawnSync(
       [ffprobeBin, "-v", "error", "-print_format", "json", "-show_format", "-show_streams", file],
-      { stdout: "pipe", stderr: "ignore" },
+      { stdout: "pipe", stderr: "ignore", windowsHide: true },
     );
     if (proc.exitCode !== 0) return null;
     const json = JSON.parse(proc.stdout.toString()) as {
@@ -143,6 +162,7 @@ export async function runFfmpeg(opts: {
   const proc = Bun.spawn([bin, "-hide_banner", "-y", ...args], {
     stdout: "ignore",
     stderr: "pipe",
+    windowsHide: true,
   });
 
   const onAbort = () => {
