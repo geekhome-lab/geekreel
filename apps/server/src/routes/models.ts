@@ -5,6 +5,7 @@ import {
   getAdapter,
   listAdapters,
   missingUnitPrice,
+  validateComfyConfig,
   voiceFamilyOf,
   voicesForConfig,
   voicesForFamily,
@@ -91,6 +92,10 @@ modelsRoutes.post("/endpoints", async (c) => {
   for (const field of adapter.configFields) {
     if (field.required && !body.config?.[field.key]?.trim()) return err(c, `请填写 ${field.label}`);
   }
+  if (body.adapterType === "comfyui") {
+    const bad = validateComfyConfig(body.config ?? {}, body.capability);
+    if (bad) return err(c, bad);
+  }
   const ep = createEndpoint({
     name: body.name.trim(),
     adapterType: body.adapterType,
@@ -111,6 +116,13 @@ modelsRoutes.patch("/endpoints/:id", async (c) => {
     vision?: boolean;
     enabled?: boolean;
   };
+  const existing = getEndpoint(c.req.param("id"), true);
+  if (!existing) return err(c, "端点不存在", 404);
+  if (existing.adapterType === "comfyui" && body.config) {
+    const merged = { ...existing.config, ...body.config };
+    const bad = validateComfyConfig(merged, existing.capability);
+    if (bad) return err(c, bad);
+  }
   const ep = updateEndpoint(c.req.param("id"), body);
   if (!ep) return err(c, "端点不存在", 404);
   const fresh = getEndpoint(ep.id)!;

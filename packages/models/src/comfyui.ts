@@ -44,14 +44,52 @@ function looksLikeWeightFile(name: string): boolean {
   return /\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(name);
 }
 
+/** 内置文生图只适配 SD1.5 / SDXL 整包 checkpoint；Flux 等要贴专用工作流 */
+export function needsCustomWorkflow(model: string): boolean {
+  const n = model.toLowerCase();
+  return /flux|sd3|stable[\s_-]?diffusion[\s_-]?3|hunyuan|hydit|wan[\s_.-]?2|ltx|mochi|cogvideo|svd|chroma|auraflow|pixart|kolors|qwen[\s_-]?image/.test(
+    n,
+  );
+}
+
+export function customWorkflowHint(model = ""): string {
+  const name = model.trim() ? `「${model.trim().split(/[/\\]/).pop()}」` : "这个模型";
+  return `${name} 必须贴工作流。请在 ComfyUI 打开对应出图流程 → 菜单 Save (API Format) → 把 JSON 贴进来再保存。`;
+}
+
+/** 保存端点前校验；返回人话错误，通过则 null */
+export function validateComfyConfig(
+  config: Record<string, string>,
+  capability: "image" | "video" | "llm" | "tts" = "image",
+): string | null {
+  const model = (config.model ?? "").trim();
+  const workflow = (config.workflow ?? "").trim();
+  if (capability === "video" && !workflow) {
+    return "出视频必须贴工作流。请在 ComfyUI 菜单选 Save (API Format)，把 JSON 贴进来。";
+  }
+  if (!model && !workflow) {
+    return "请先点「探测本机模型」选一个，或贴一份工作流。";
+  }
+  if (model && !workflow && !looksLikeWeightFile(model)) {
+    return "当前模型不可用。请点「探测本机模型」，从列表里重新选一个。";
+  }
+  if (model && !workflow && needsCustomWorkflow(model)) {
+    return customWorkflowHint(model);
+  }
+  return null;
+}
+
 /** 把 ComfyUI 英文校验错误翻成用户能看懂的中文（只说怎么修，不说别选什么） */
-export function explainComfyError(raw: string, details: string[] = []): string {
+export function explainComfyError(raw: string, details: string[] = [], model = ""): string {
   const text = [raw, ...details].filter(Boolean).join(" ");
+  if (needsCustomWorkflow(model) || /flux|unet|dualclip|vae_name|gguf/i.test(text)) {
+    return customWorkflowHint(model);
+  }
   if (/value_not_in_list|not in list|ckpt_name|unet_name|config_name|\.ya?ml/i.test(text)) {
     return "本机 ComfyUI 里没有这个模型。请到「模型」页点「探测本机模型」，从列表里重新选一个。";
   }
-  if (/Prompt outputs failed validation|prompt_outputs_failed_validation/i.test(text)) {
-    return "出图参数和 ComfyUI 对不上。请到「模型」页点「探测本机模型」，从列表里重新选一个，或检查工作流是否贴对了。";
+  if (/Prompt outputs failed validation|prompt_outputs_failed_validation|exception_during_validation/i.test(text)) {
+    return "出图没成功：当前工作流和模型对不上。请到「模型」页贴一份 ComfyUI 的 Save (API Format) 工作流后再试。";
   }
   if (/required input|missing/i.test(text)) {
     return "工作流还不完整。请到 ComfyUI 里用 Save (API Format) 重新导出，再贴进「模型」页。";
@@ -61,7 +99,7 @@ export function explainComfyError(raw: string, details: string[] = []): string {
   }
   // 英文原文对用户没帮助，给一句通用说明
   if (/^[A-Za-z][\w\s.'":\-_/()]+$/.test(raw.trim()) || !raw.trim()) {
-    return "ComfyUI 这次没跑成。请确认 ComfyUI 窗口没有红字，再到「模型」页点探测选一个模型后重试。";
+    return "ComfyUI 这次没跑成。请确认 ComfyUI 窗口没有红字，再到「模型」页检查工作流后重试。";
   }
   return raw;
 }
@@ -76,7 +114,7 @@ function collectNodeErrorDetails(
     .filter(Boolean);
 }
 
-async function readError(res: Response): Promise<string> {
+async function readError(res: Response, model = ""): Promise<string> {
   try {
     const json = (await res.json()) as {
       error?: { message?: string; type?: string } | string;
@@ -88,7 +126,7 @@ async function readError(res: Response): Promise<string> {
       typeof json.error === "string"
         ? json.error
         : json.error?.message ?? json.message ?? `HTTP ${res.status}`;
-    return explainComfyError(raw, details);
+    return explainComfyError(raw, details, model);
   } catch {
     return `HTTP ${res.status}`;
   }
@@ -400,13 +438,17 @@ async function runWorkflow(
   if (!workflowRaw && req.prefer === "video") {
     throw new Error("出视频请先贴一份 ComfyUI 的 API Format 工作流。出图可以不贴，用内置文生图。");
   }
-  if (!workflowRaw && !(config.model ?? "").trim()) {
+  const model = (config.model ?? "").trim();
+  if (!workflowRaw && !model) {
     throw new Error("还没选模型。请到「模型」页点「探测本机模型」，从列表里选一个。");
   }
-  if (!workflowRaw && !looksLikeWeightFile(config.model ?? "")) {
+  if (!workflowRaw && !looksLikeWeightFile(model)) {
     throw new Error("当前模型不可用。请到「模型」页点「探测本机模型」，从列表里重新选一个。");
   }
-  let prompt = workflowRaw ? parseComfyWorkflow(workflowRaw) : defaultImageWorkflow(config.model ?? "");
+  if (!workflowRaw && needsCustomWorkflow(model)) {
+    throw new Error(customWorkflowHint(model));
+  }
+  let prompt = workflowRaw ? parseComfyWorkflow(workflowRaw) : defaultImageWorkflow(model);
   const size = parseSize(req.size);
   let imageName: string | undefined;
   let lastFrameName: string | undefined;
@@ -435,7 +477,7 @@ async function runWorkflow(
     body: JSON.stringify(body),
     signal: req.signal ?? null,
   });
-  if (!create.ok) throw new Error(await readError(create));
+  if (!create.ok) throw new Error(await readError(create, model));
   const created = (await create.json()) as {
     prompt_id?: string;
     node_errors?: Record<string, { errors?: Array<{ details?: string; message?: string; type?: string }> }>;
@@ -447,11 +489,11 @@ async function runWorkflow(
       typeof created.error === "string"
         ? created.error
         : created.error?.message || "Prompt outputs failed validation";
-    throw new Error(explainComfyError(raw, details));
+    throw new Error(explainComfyError(raw, details, model));
   }
   if (created.error) {
     const raw = typeof created.error === "string" ? created.error : created.error.message || "ComfyUI 拒绝了这份工作流";
-    throw new Error(explainComfyError(raw));
+    throw new Error(explainComfyError(raw, [], model));
   }
   const id = created.prompt_id;
   if (!id) throw new Error("ComfyUI 没有返回任务 id");
@@ -502,7 +544,7 @@ export const comfyui: ModelAdapter = {
       key: "workflow",
       label: "工作流 JSON（API Format）",
       type: "textarea",
-      placeholder: "出图可不贴。出视频请从 ComfyUI 菜单 Save (API Format) 贴进来。可用 {{prompt}} 占位。",
+      placeholder: "在 ComfyUI 菜单选 Save (API Format)，整段 JSON 贴到这里。可用 {{prompt}} 占位。",
     },
   ],
 

@@ -455,3 +455,4 @@ export { fetchChannelPrices, channelPriceHint } from "./fetchPrices";
 export type { ChannelPrices, PriceQuote } from "./prices";
 export { hasAnyPrice, missingUnitPrice } from "./prices";
 export { isLocalBaseUrl, localZeroPrices } from "./local";
+export { customWorkflowHint, needsCustomWorkflow, validateComfyConfig } from "./comfyui";

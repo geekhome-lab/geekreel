@@ -2,11 +2,14 @@ import { expect, test } from "bun:test";
 import {
   applyPlaceholders,
   collectComfyOutputs,
+  customWorkflowHint,
   explainComfyError,
   injectComfyPrompt,
+  needsCustomWorkflow,
   parseComfyWorkflow,
   parseSize,
   pickCheckpoints,
+  validateComfyConfig,
 } from "./comfyui";
 
 test("拒收普通工作流，只要 API Format", () => {
@@ -65,11 +68,27 @@ test("探测别把 yaml 配置当成 checkpoint", () => {
 });
 
 test("ComfyUI 校验失败翻成中文", () => {
-  expect(explainComfyError("Prompt outputs failed validation")).toContain("对不上");
+  expect(explainComfyError("Prompt outputs failed validation")).toContain("工作流");
   expect(explainComfyError("Prompt outputs failed validation", ["ckpt_name: 'v1-inference.yaml' not in list"])).toContain(
     "探测本机模型",
   );
   expect(explainComfyError("Prompt outputs failed validation")).not.toMatch(/不要选|yaml/i);
+});
+
+test("Flux 模型必须贴专用工作流", () => {
+  expect(needsCustomWorkflow("flux-2-klein-base-4b.safetensors")).toBe(true);
+  expect(needsCustomWorkflow("sd_xl_base_1.0.safetensors")).toBe(false);
+  expect(customWorkflowHint("flux-2-klein-base-4b.safetensors")).toContain("Save (API Format)");
+  expect(explainComfyError("Prompt outputs failed validation", [], "flux-2-klein-base-4b.safetensors")).toContain(
+    "工作流",
+  );
+  expect(
+    validateComfyConfig({ model: "flux-2-klein-base-4b.safetensors" }, "image"),
+  ).toContain("必须贴工作流");
+  expect(
+    validateComfyConfig({ model: "flux-2-klein-base-4b.safetensors", workflow: '{"1":{}}' }, "image"),
+  ).toBeNull();
+  expect(validateComfyConfig({ model: "a.safetensors" }, "video")).toContain("必须贴工作流");
 });
 
 test("收集出图和出视频文件", () => {

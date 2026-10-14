@@ -308,7 +308,7 @@ export const modelPresets: ModelPreset[] = [
   {
     id: "comfyui-image",
     name: "ComfyUI 出图",
-    hint: "本机打开 ComfyUI（默认 8188）。可直接填 checkpoint，或贴 Save (API Format) 工作流。",
+    hint: "本机打开 ComfyUI（默认 8188）。先探测选模型；SD1.5 / SDXL 可直接出图，Flux 等必须再贴 Save (API Format) 工作流。",
     capability: "image",
     adapterType: "comfyui",
     config: { baseUrl: "http://127.0.0.1:8188", model: "" },

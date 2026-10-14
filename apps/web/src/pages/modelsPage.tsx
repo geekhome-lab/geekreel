@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   capabilityLabels,
+  customWorkflowHint,
   isLocalBaseUrl,
   matchPreset,
   missingUnitPrice,
   modelPresets,
+  needsCustomWorkflow,
+  validateComfyConfig,
   type Capability,
   type FieldSpec,
   type ModelEndpoint,
@@ -218,7 +221,7 @@ export function ModelsPage() {
         extra="可选项，不填密钥"
       >
         <p className="mb-3 text-[11px] text-fg-faint">
-          Ollama / LM Studio 走 OpenAI 兼容接口。ComfyUI 出图可只填 checkpoint；出视频请贴 API Format 工作流。
+          Ollama / LM Studio 填地址即可。ComfyUI：SD1.5 / SDXL 选模型就能出图；Flux 等必须再贴 Save (API Format) 工作流。
         </p>
         <div className="space-y-4">
           {capabilities.map((cap) => {
@@ -564,9 +567,33 @@ const EDIT_FIELDS: Record<string, { label: string; type?: "text" | "textarea"; p
   workflow: {
     label: "工作流 JSON（API Format）",
     type: "textarea",
-    placeholder: "出图可不贴。出视频请从 ComfyUI 菜单 Save (API Format) 贴进来。可用 {{prompt}}。",
+    placeholder: "在 ComfyUI 菜单选 Save (API Format)，整段 JSON 贴到这里。可用 {{prompt}}。",
   },
 };
+
+function ComfyWorkflowGuide(props: { model: string; required: boolean; filled: boolean }) {
+  if (!props.required) {
+    return (
+      <p className="mt-1 text-[11px] text-fg-faint">
+        SD1.5 / SDXL 整包模型可不贴。Flux、视频等需要专用流程时，再从 ComfyUI 导出 API Format。
+      </p>
+    );
+  }
+  if (props.filled) {
+    return <p className="mt-1 text-[11px] text-emerald-500">已贴工作流，可以保存。</p>;
+  }
+  const name = props.model.trim().split(/[/\\]/).pop() || "当前模型";
+  return (
+    <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200">
+      <p className="font-medium text-amber-300">「{name}」必须贴工作流，否则无法保存、也无法出图。</p>
+      <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 text-amber-100/90">
+        <li>在 ComfyUI 里打开能跑通这个模型的文生图流程</li>
+        <li>菜单选 Save (API Format)</li>
+        <li>把整段 JSON 贴到上面输入框</li>
+      </ol>
+    </div>
+  );
+}
 
 function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSaved: (data: SavedEndpoint) => void }) {
   const p = props.preset;
@@ -578,12 +605,13 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
   const [error, setError] = useState("");
 
   const needModel = p.adapterType !== "comfyui";
-  const needWorkflow = p.id === "comfyui-video";
+  const workflowRequired =
+    p.id === "comfyui-video" || (p.adapterType === "comfyui" && needsCustomWorkflow(extra.model ?? ""));
   const readySecrets = p.secretKeys.every((k) => Boolean(secrets[k]?.trim()));
   const readyLocal =
     Boolean(extra.baseUrl?.trim()) &&
     (!needModel || Boolean(extra.model?.trim())) &&
-    (!needWorkflow || Boolean(extra.workflow?.trim())) &&
+    (!workflowRequired || Boolean(extra.workflow?.trim())) &&
     (p.id !== "comfyui-image" || Boolean(extra.model?.trim() || extra.workflow?.trim()));
   const canSave = readySecrets && (p.local ? readyLocal : true);
 
@@ -596,7 +624,13 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
       }
       if (p.local && !extra.baseUrl?.trim()) throw new Error("先填本机地址");
       if (needModel && !extra.model?.trim()) throw new Error("先填模型名，或点探测从列表选");
-      if (needWorkflow && !extra.workflow?.trim()) throw new Error("出视频请贴 ComfyUI 的 API Format 工作流");
+      if (p.adapterType === "comfyui") {
+        const bad = validateComfyConfig(
+          { ...p.config, ...extra, ...(optionalKey.trim() ? { apiKey: optionalKey.trim() } : {}) },
+          p.capability,
+        );
+        if (bad) throw new Error(bad);
+      }
       const config = { ...p.config, ...extra, ...secrets };
       if (p.local && optionalKey.trim()) config.apiKey = optionalKey.trim();
       return apiJson<SavedEndpoint>("/api/models/endpoints", "post", {
@@ -621,14 +655,15 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
         ) : (
           <p className="text-[11px] text-fg-faint">加上后会向渠道要报价。拉不到会让你手填，不然近 30 天花费是 0。</p>
         )}
-        {(p.editKeys ?? []).map((key) => {
-          if (p.adapterType === "comfyui" && key === "model") return null;
+        {(p.editKeys ?? [])
+          .filter((key) => !(p.adapterType === "comfyui" && (key === "model" || key === "workflow")))
+          .map((key) => {
           const meta = EDIT_FIELDS[key] ?? { label: key };
           return (
             <div key={key}>
               <label className="mb-1.5 block text-xs text-fg-dim">
                 {meta.label}
-                {(key === "baseUrl" || (needModel && key === "model") || (needWorkflow && key === "workflow")) && (
+                {(key === "baseUrl" || (needModel && key === "model")) && (
                   <span className="text-red-400"> *</span>
                 )}
               </label>
@@ -646,6 +681,24 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
             config={{ ...extra, ...secrets, ...(optionalKey.trim() ? { apiKey: optionalKey.trim() } : {}) }}
             onPick={(id) => setExtra((m) => ({ ...m, model: id }))}
           />
+        ) : null}
+        {p.adapterType === "comfyui" ? (
+          <div>
+            <label className="mb-1.5 block text-xs text-fg-dim">
+              工作流 JSON（API Format）
+              {workflowRequired && <span className="text-red-400"> *</span>}
+            </label>
+            {fieldControl(
+              { key: "workflow", type: "textarea", placeholder: EDIT_FIELDS.workflow!.placeholder },
+              extra.workflow ?? "",
+              (v) => setExtra((m) => ({ ...m, workflow: v })),
+            )}
+            <ComfyWorkflowGuide
+              model={extra.model ?? ""}
+              required={workflowRequired}
+              filled={Boolean(extra.workflow?.trim())}
+            />
+          </div>
         ) : null}
         {p.local && p.adapterType === "openai-compatible" ? (
           <div>
@@ -683,6 +736,13 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
           <button
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black hover:brightness-110 disabled:opacity-40"
             disabled={saveMutation.isPending || !canSave}
+            title={
+              workflowRequired && !extra.workflow?.trim()
+                ? "先贴工作流再保存"
+                : !extra.model?.trim() && p.adapterType === "comfyui"
+                  ? "先探测并选一个模型"
+                  : undefined
+            }
             onClick={() => saveMutation.mutate()}
           >
             {saveMutation.isPending ? (p.local ? "加上…" : "加上并拉报价…") : "加上"}
@@ -775,6 +835,11 @@ function EndpointModal(props: {
     };
   }, [ep?.id]);
 
+  const workflowRequired =
+    adapterType === "comfyui" && (capability === "video" || needsCustomWorkflow(config.model ?? ""));
+  const canSaveEndpoint =
+    Boolean(name.trim()) && !(workflowRequired && !config.workflow?.trim());
+
   const saveMutation = useMutation({
     mutationFn: async () => {
       const sent = { ...config };
@@ -784,15 +849,8 @@ function EndpointModal(props: {
       }
       if (adapterType === "comfyui") {
         if (!ep && !sent.baseUrl?.trim()) throw new Error("请填写 ComfyUI 地址");
-        if (!ep && capability === "video" && !sent.workflow?.trim()) {
-          throw new Error("出视频请贴 ComfyUI 的 API Format 工作流");
-        }
-        if (!ep && capability === "image" && !sent.model?.trim() && !sent.workflow?.trim()) {
-          throw new Error("出图请先点「探测本机模型」，从列表里选一个，或贴工作流");
-        }
-        if (sent.model?.trim() && !sent.workflow?.trim() && !/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(sent.model)) {
-          throw new Error("当前模型不可用。请点「探测本机模型」，从列表里重新选一个。");
-        }
+        const bad = validateComfyConfig(sent, capability);
+        if (bad) throw new Error(bad);
       }
       const payload: Record<string, unknown> = { name: name.trim(), config: sent, webSearch, vision };
       if (ep) {
@@ -877,10 +935,9 @@ function EndpointModal(props: {
           </div>
         )}
 
-        {adapter?.configFields.map((f) => {
-          // ComfyUI 模型只从探测列表选，不提供手填，避免出现列表外无效项
-          if (adapterType === "comfyui" && f.key === "model") return null;
-          return (
+        {adapter?.configFields
+          .filter((f) => !(adapterType === "comfyui" && (f.key === "model" || f.key === "workflow")))
+          .map((f) => (
             <div key={f.key}>
               <label className="mb-1.5 block text-xs text-fg-dim">
                 {f.label}
@@ -891,8 +948,7 @@ function EndpointModal(props: {
                 <p className="mt-1 text-[10px] text-fg-faint">已保存过。留空继续用原来的，不要把打码贴回去。</p>
               )}
             </div>
-          );
-        })}
+          ))}
 
         {(adapterType === "openai-compatible" || adapterType === "comfyui") && (
           <ProbeModels
@@ -906,6 +962,29 @@ function EndpointModal(props: {
               }
             }}
           />
+        )}
+
+        {adapterType === "comfyui" && (
+          <div>
+            <label className="mb-1.5 block text-xs text-fg-dim">
+              工作流 JSON（API Format）
+              {workflowRequired && <span className="text-red-400"> *</span>}
+            </label>
+            {fieldControl(
+              {
+                key: "workflow",
+                type: "textarea",
+                placeholder: "在 ComfyUI 菜单选 Save (API Format)，整段 JSON 贴到这里。可用 {{prompt}}。",
+              },
+              config.workflow ?? "",
+              (v) => setConfig((m) => ({ ...m, workflow: v })),
+            )}
+            <ComfyWorkflowGuide
+              model={config.model ?? ""}
+              required={workflowRequired}
+              filled={Boolean(config.workflow?.trim())}
+            />
+          </div>
         )}
 
         {capability === "llm" && (
@@ -980,11 +1059,21 @@ function EndpointModal(props: {
           </button>
           <button
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black hover:brightness-110 disabled:opacity-40"
-            disabled={!name.trim() || saveMutation.isPending}
-            title={!name.trim() ? "先填名称" : undefined}
+            disabled={!canSaveEndpoint || saveMutation.isPending}
+            title={
+              !name.trim()
+                ? "先填名称"
+                : workflowRequired && !config.workflow?.trim()
+                  ? "先贴工作流再保存"
+                  : undefined
+            }
             onClick={() => {
               if (!name.trim()) {
                 setError("先填名称再保存");
+                return;
+              }
+              if (workflowRequired && !config.workflow?.trim()) {
+                setError(customWorkflowHint(config.model ?? ""));
                 return;
               }
               saveMutation.mutate();
