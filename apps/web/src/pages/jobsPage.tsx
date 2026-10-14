@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { jobStatusLabels, jobTypeLabels, type Job, type JobStatus } from "@vw/core";
+import { jobStatusLabels, jobTypeLabels, type Job, type JobStatus, type Project } from "@vw/core";
 import { api, apiJson } from "../lib/api";
 import { formatTime } from "../lib/format";
 import { listHomeWorks, saveHomeDraft, syncHomeWorks, workStatusLabels } from "../lib/homeDraft";
@@ -26,6 +26,8 @@ const tabs: Array<{ key: string; label: string }> = [
 ];
 
 type JobsPageData = { items: Job[]; total: number; page: number; pageSize: number };
+
+type JobGroup = { key: string; projectId: string | null; title: string; jobs: Job[] };
 
 export function JobsPage() {
   const queryClient = useQueryClient();
@@ -70,6 +72,7 @@ export function JobsPage() {
     return jobTypeLabels[job.type] ?? job.type;
   };
   const [tab, setTab] = useState("");
+  const [projectFilter, setProjectFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [detail, setDetail] = useState<Job | null>(null);
   const [worksTick, setWorksTick] = useState(0);
@@ -97,9 +100,25 @@ export function JobsPage() {
 
   const pending = useMemo(() => listHomeWorks().filter((w) => w.step !== "write"), [worksTick]);
 
+  const { data: projects = [] } = useQuery({
+    queryKey: ["projects", "jobs-filter"],
+    queryFn: () => api<Project[]>("/api/projects"),
+    staleTime: 60_000,
+  });
+
+  const projectName = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const p of projects) map.set(p.id, p.name);
+    return map;
+  }, [projects]);
+
+  const projectQuery =
+    projectFilter === "all" ? "" : projectFilter === "none" ? "&projectId=none" : `&projectId=${encodeURIComponent(projectFilter)}`;
+
   const { data } = useQuery({
-    queryKey: ["jobs", tab, page],
-    queryFn: () => api<JobsPageData>(`/api/jobs?page=${page}&pageSize=20${tab ? `&status=${tab}` : ""}`),
+    queryKey: ["jobs", tab, page, projectFilter],
+    queryFn: () =>
+      api<JobsPageData>(`/api/jobs?page=${page}&pageSize=40${tab ? `&status=${tab}` : ""}${projectQuery}`),
     refetchInterval: 30_000,
   });
 
@@ -107,15 +126,49 @@ export function JobsPage() {
     const map = new Map<string, Job>();
     for (const j of data?.items ?? []) map.set(j.id, j);
     for (const j of Object.values(liveJobs)) {
+      if (projectFilter === "none" && j.projectId) continue;
+      if (projectFilter !== "all" && projectFilter !== "none" && j.projectId !== projectFilter) continue;
       if (tab === "active" && (j.status === "queued" || j.status === "running")) map.set(j.id, j);
       else if (tab && tab !== "active" && j.status === tab) map.set(j.id, j);
       else if (!tab) map.set(j.id, j);
     }
     return [...map.values()].sort((a, b) => b.createdAt - a.createdAt);
-  }, [data, liveJobs, tab]);
+  }, [data, liveJobs, tab, projectFilter]);
+
+  const groups = useMemo(() => {
+    const order: string[] = [];
+    const bucket = new Map<string, JobGroup>();
+    for (const job of merged) {
+      const key = job.projectId ?? "none";
+      if (!bucket.has(key)) {
+        order.push(key);
+        bucket.set(key, {
+          key,
+          projectId: job.projectId,
+          title: job.projectId ? projectName.get(job.projectId) || `项目 ${job.projectId.slice(0, 8)}` : "未关联项目",
+          jobs: [],
+        });
+      }
+      bucket.get(key)!.jobs.push(job);
+    }
+    // 有名字的项目按最近任务（已是时间序）自然排列；未关联放最后
+    const named = order.filter((k) => k !== "none").map((k) => bucket.get(k)!);
+    const none = bucket.get("none");
+    return none ? [...named, none] : named;
+  }, [merged, projectName]);
+
+  const filterProjects = useMemo(() => {
+    const ids = new Set<string>();
+    for (const j of Object.values(liveJobs)) if (j.projectId) ids.add(j.projectId);
+    for (const j of data?.items ?? []) if (j.projectId) ids.add(j.projectId);
+    for (const p of projects) ids.add(p.id);
+    return [...ids]
+      .map((id) => ({ id, name: projectName.get(id) || id.slice(0, 8) }))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  }, [projects, projectName, liveJobs, data]);
 
   const total = data?.total ?? merged.length;
-  const pageSize = data?.pageSize ?? 20;
+  const pageSize = data?.pageSize ?? 40;
   const pages = Math.max(1, Math.ceil(total / pageSize));
 
   const cancelMutation = useMutation({
@@ -131,7 +184,7 @@ export function JobsPage() {
     <div className="p-6">
       <div className="mb-6">
         <h1 className="text-lg font-semibold">任务中心</h1>
-        <p className="mt-0.5 text-xs text-fg-faint">耗时操作在这里排队。点一条看详情。</p>
+        <p className="mt-0.5 text-xs text-fg-faint">耗时操作在这里排队。按项目分开看，点一条看详情。</p>
       </div>
 
       {pending.length > 0 && (
@@ -171,7 +224,25 @@ export function JobsPage() {
             </button>
           ))}
         </div>
-        <span className="text-[11px] text-fg-faint">{total} 条</span>
+        <select
+          className="rounded-lg border border-line bg-panel px-3 py-1.5 text-xs text-fg outline-none focus:border-accent-dim"
+          value={projectFilter}
+          onChange={(e) => {
+            setProjectFilter(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="all">全部项目</option>
+          <option value="none">未关联项目</option>
+          {filterProjects.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-fg-faint">
+          {total} 条 · {groups.length} 个分组
+        </span>
       </div>
 
       {merged.length === 0 && (
@@ -180,49 +251,37 @@ export function JobsPage() {
         </div>
       )}
 
-      <div className="space-y-2">
-        {merged.map((job) => (
-          <div key={job.id} className="rounded-xl border border-line bg-panel p-4">
-            <div className="flex items-center gap-3">
-              <span className={`rounded-full px-2 py-0.5 text-[11px] ${statusStyle[job.status]}`}>
-                {jobStatusLabels[job.status]}
-              </span>
-              <button className="min-w-0 truncate text-left text-sm font-medium hover:text-accent" onClick={() => openJob(job)}>
-                {jobTitle(job)}
-              </button>
-              {job.message && <span className="truncate text-xs text-fg-faint">{job.message}</span>}
-              <span className="ml-auto shrink-0 text-[11px] text-fg-faint">{formatTime(job.createdAt)}</span>
-              {job.status === "running" && (
+      <div className="space-y-5">
+        {groups.map((group) => (
+          <section key={group.key}>
+            <div className="mb-2 flex items-center gap-2">
+              <h2 className="text-sm font-medium text-fg">{group.title}</h2>
+              <span className="rounded-full bg-panel-2 px-2 py-0.5 text-[10px] text-fg-faint">{group.jobs.length}</span>
+              {group.projectId ? (
                 <button
-                  className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-red-400"
-                  onClick={() => cancelMutation.mutate(job.id)}
+                  className="text-[11px] text-fg-faint hover:text-accent"
+                  onClick={() => {
+                    setCurrentProject(group.projectId!);
+                    navigate("/timeline");
+                  }}
                 >
-                  {iconX({ width: 12, height: 12 })} 取消
+                  打开项目
                 </button>
-              )}
-              {(job.status === "failed" || job.status === "canceled") && (
-                <button
-                  className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent"
-                  onClick={() => retryMutation.mutate(job.id)}
-                >
-                  {iconRefresh({ width: 12, height: 12 })} 重试
-                </button>
-              )}
+              ) : null}
             </div>
-            {(job.status === "running" || job.status === "queued") && (
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-panel-2">
-                <div
-                  className="h-full rounded-full bg-accent transition-all duration-300"
-                  style={{ width: `${Math.round(job.progress * 100)}%` }}
+            <div className="space-y-2">
+              {group.jobs.map((job) => (
+                <JobCard
+                  key={job.id}
+                  job={job}
+                  title={jobTitle(job)}
+                  onOpen={() => openJob(job)}
+                  onCancel={() => cancelMutation.mutate(job.id)}
+                  onRetry={() => retryMutation.mutate(job.id)}
                 />
-              </div>
-            )}
-            {job.error && (
-              <pre className="mt-3 overflow-x-auto rounded-lg bg-red-950/30 p-2.5 text-[11px] whitespace-pre-wrap text-red-300">
-                {job.error}
-              </pre>
-            )}
-          </div>
+              ))}
+            </div>
+          </section>
         ))}
       </div>
 
@@ -249,6 +308,59 @@ export function JobsPage() {
       )}
 
       {detail && <JobDetail job={detail} onClose={() => setDetail(null)} />}
+    </div>
+  );
+}
+
+function JobCard(props: {
+  job: Job;
+  title: string;
+  onOpen: () => void;
+  onCancel: () => void;
+  onRetry: () => void;
+}) {
+  const { job } = props;
+  return (
+    <div className="rounded-xl border border-line bg-panel p-4">
+      <div className="flex items-center gap-3">
+        <span className={`rounded-full px-2 py-0.5 text-[11px] ${statusStyle[job.status]}`}>
+          {jobStatusLabels[job.status]}
+        </span>
+        <button className="min-w-0 truncate text-left text-sm font-medium hover:text-accent" onClick={props.onOpen}>
+          {props.title}
+        </button>
+        {job.message && <span className="truncate text-xs text-fg-faint">{job.message}</span>}
+        <span className="ml-auto shrink-0 text-[11px] text-fg-faint">{formatTime(job.createdAt)}</span>
+        {job.status === "running" && (
+          <button
+            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-red-400"
+            onClick={props.onCancel}
+          >
+            {iconX({ width: 12, height: 12 })} 取消
+          </button>
+        )}
+        {(job.status === "failed" || job.status === "canceled") && (
+          <button
+            className="flex items-center gap-1 rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent"
+            onClick={props.onRetry}
+          >
+            {iconRefresh({ width: 12, height: 12 })} 重试
+          </button>
+        )}
+      </div>
+      {(job.status === "running" || job.status === "queued") && (
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-panel-2">
+          <div
+            className="h-full rounded-full bg-accent transition-all duration-300"
+            style={{ width: `${Math.round(job.progress * 100)}%` }}
+          />
+        </div>
+      )}
+      {job.error && (
+        <pre className="mt-3 overflow-x-auto rounded-lg bg-red-950/30 p-2.5 text-[11px] whitespace-pre-wrap text-red-300">
+          {job.error}
+        </pre>
+      )}
     </div>
   );
 }

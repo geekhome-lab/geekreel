@@ -11,6 +11,13 @@ jobsRoutes.get("/", (c) => {
   const pageSize = Math.min(Math.max(Number(c.req.query("pageSize") ?? 20) || 20, 1), 100);
   const q = c.req.query("q")?.trim();
   const type = c.req.query("type")?.trim();
+  const projectRaw = c.req.query("projectId");
+  const projectId =
+    projectRaw === undefined
+      ? undefined
+      : projectRaw === "" || projectRaw === "none"
+        ? null
+        : projectRaw.trim();
   let status: JobStatus | JobStatus[] | undefined;
   if (raw === "active") status = ["queued", "running"];
   else if (raw === "queued" || raw === "running" || raw === "done" || raw === "failed" || raw === "canceled") status = raw;
@@ -18,6 +25,7 @@ jobsRoutes.get("/", (c) => {
     status,
     q,
     type,
+    projectId,
     limit: pageSize,
     offset: (page - 1) * pageSize,
   });

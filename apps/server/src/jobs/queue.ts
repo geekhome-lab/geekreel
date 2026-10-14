@@ -45,7 +45,16 @@ class JobQueue {
     return this.queryJobs(opts).items;
   }
 
-  queryJobs(opts: { status?: JobStatus | JobStatus[]; limit?: number; offset?: number; q?: string; type?: string } = {}): {
+  queryJobs(
+    opts: {
+      status?: JobStatus | JobStatus[];
+      limit?: number;
+      offset?: number;
+      q?: string;
+      type?: string;
+      projectId?: string | null;
+    } = {},
+  ): {
     items: Job[];
     total: number;
   } {
@@ -62,6 +71,12 @@ class JobQueue {
     if (opts.type) {
       where.push("type = ?");
       params.push(opts.type);
+    }
+    if (opts.projectId === null || opts.projectId === "") {
+      where.push("projectId IS NULL");
+    } else if (opts.projectId) {
+      where.push("projectId = ?");
+      params.push(opts.projectId);
     }
     if (opts.q?.trim()) {
       where.push("(type LIKE ? OR IFNULL(message, '') LIKE ? OR IFNULL(error, '') LIKE ?)");
