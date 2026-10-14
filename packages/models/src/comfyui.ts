@@ -36,11 +36,59 @@ function authHeaders(config: Record<string, string>): HeadersInit {
   return key ? { Authorization: `Bearer ${key}` } : {};
 }
 
+function looksLikeConfigYaml(name: string): boolean {
+  return /\.ya?ml$/i.test(name);
+}
+
+function looksLikeWeightFile(name: string): boolean {
+  return /\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(name);
+}
+
+/** 把 ComfyUI 英文校验错误翻成用户能看懂的中文（只说怎么修，不说别选什么） */
+export function explainComfyError(raw: string, details: string[] = []): string {
+  const text = [raw, ...details].filter(Boolean).join(" ");
+  if (/value_not_in_list|not in list|ckpt_name|unet_name|config_name|\.ya?ml/i.test(text)) {
+    return "本机 ComfyUI 里没有这个模型。请到「模型」页点「探测本机模型」，从列表里重新选一个。";
+  }
+  if (/Prompt outputs failed validation|prompt_outputs_failed_validation/i.test(text)) {
+    return "出图参数和 ComfyUI 对不上。请到「模型」页点「探测本机模型」，从列表里重新选一个，或检查工作流是否贴对了。";
+  }
+  if (/required input|missing/i.test(text)) {
+    return "工作流还不完整。请到 ComfyUI 里用 Save (API Format) 重新导出，再贴进「模型」页。";
+  }
+  if (/ECONNREFUSED|fetch failed|Unable to connect|Failed to fetch/i.test(text)) {
+    return "连不上 ComfyUI。请先在本机打开 ComfyUI（默认端口 8188）。";
+  }
+  // 英文原文对用户没帮助，给一句通用说明
+  if (/^[A-Za-z][\w\s.'":\-_/()]+$/.test(raw.trim()) || !raw.trim()) {
+    return "ComfyUI 这次没跑成。请确认 ComfyUI 窗口没有红字，再到「模型」页点探测选一个模型后重试。";
+  }
+  return raw;
+}
+
+function collectNodeErrorDetails(
+  nodeErrors: Record<string, { errors?: Array<{ details?: string; message?: string; type?: string }> }> | undefined,
+): string[] {
+  if (!nodeErrors) return [];
+  return Object.values(nodeErrors)
+    .flatMap((n) => n.errors ?? [])
+    .map((e) => e.details || e.message || e.type || "")
+    .filter(Boolean);
+}
+
 async function readError(res: Response): Promise<string> {
   try {
-    const json = (await res.json()) as { error?: { message?: string } | string; message?: string; node_errors?: unknown };
-    if (typeof json.error === "string") return json.error;
-    return json.error?.message ?? json.message ?? `HTTP ${res.status}`;
+    const json = (await res.json()) as {
+      error?: { message?: string; type?: string } | string;
+      message?: string;
+      node_errors?: Record<string, { errors?: Array<{ details?: string; message?: string; type?: string }> }>;
+    };
+    const details = collectNodeErrorDetails(json.node_errors);
+    const raw =
+      typeof json.error === "string"
+        ? json.error
+        : json.error?.message ?? json.message ?? `HTTP ${res.status}`;
+    return explainComfyError(raw, details);
   } catch {
     return `HTTP ${res.status}`;
   }
@@ -256,18 +304,26 @@ export function pickCheckpoints(objectInfo: Record<string, unknown>): string[] {
     "UNETLoader",
     "unCLIPCheckpointLoader",
   ];
+  const ckptKeySet = new Set(CKPT_KEYS);
   for (const type of types) {
     const node = objectInfo[type] as
       | { input?: { required?: Record<string, unknown>; optional?: Record<string, unknown> } }
       | undefined;
     const required = node?.input?.required ?? {};
     const optional = node?.input?.optional ?? {};
-    for (const spec of Object.values({ ...required, ...optional })) {
+    for (const [key, spec] of Object.entries({ ...required, ...optional })) {
+      // CheckpointLoader 还会列出 config_name（v1-inference.yaml 等），那不是权重
+      if (!ckptKeySet.has(key) && key !== "ckpt_name") continue;
       if (!Array.isArray(spec) || !Array.isArray(spec[0])) continue;
-      for (const name of spec[0]) if (typeof name === "string" && name.trim()) names.add(name);
+      for (const name of spec[0]) {
+        if (typeof name !== "string" || !name.trim()) continue;
+        if (looksLikeConfigYaml(name)) continue;
+        names.add(name);
+      }
     }
   }
-  return [...names].sort((a, b) => a.localeCompare(b));
+  // 只展示能当权重用的文件；配置 yaml 等一律不进列表
+  return [...names].filter(looksLikeWeightFile).sort((a, b) => a.localeCompare(b));
 }
 
 async function comfyFetch(
@@ -345,7 +401,10 @@ async function runWorkflow(
     throw new Error("出视频请先贴一份 ComfyUI 的 API Format 工作流。出图可以不贴，用内置文生图。");
   }
   if (!workflowRaw && !(config.model ?? "").trim()) {
-    throw new Error("没贴工作流的话，要填一个 ComfyUI 里的 checkpoint 名字。可点「探测」从本机列表选。");
+    throw new Error("还没选模型。请到「模型」页点「探测本机模型」，从列表里选一个。");
+  }
+  if (!workflowRaw && !looksLikeWeightFile(config.model ?? "")) {
+    throw new Error("当前模型不可用。请到「模型」页点「探测本机模型」，从列表里重新选一个。");
   }
   let prompt = workflowRaw ? parseComfyWorkflow(workflowRaw) : defaultImageWorkflow(config.model ?? "");
   const size = parseSize(req.size);
@@ -379,15 +438,20 @@ async function runWorkflow(
   if (!create.ok) throw new Error(await readError(create));
   const created = (await create.json()) as {
     prompt_id?: string;
-    node_errors?: Record<string, { errors?: Array<{ details?: string; message?: string }> }>;
+    node_errors?: Record<string, { errors?: Array<{ details?: string; message?: string; type?: string }> }>;
     error?: { message?: string } | string;
   };
-  const nodeErr = created.node_errors ? Object.values(created.node_errors).flatMap((n) => n.errors ?? []) : [];
-  if (nodeErr.length) {
-    throw new Error(nodeErr.map((e) => e.details || e.message).filter(Boolean).join("；") || "工作流节点报错");
+  const details = collectNodeErrorDetails(created.node_errors);
+  if (details.length) {
+    const raw =
+      typeof created.error === "string"
+        ? created.error
+        : created.error?.message || "Prompt outputs failed validation";
+    throw new Error(explainComfyError(raw, details));
   }
   if (created.error) {
-    throw new Error(typeof created.error === "string" ? created.error : created.error.message || "ComfyUI 拒绝了这份工作流");
+    const raw = typeof created.error === "string" ? created.error : created.error.message || "ComfyUI 拒绝了这份工作流";
+    throw new Error(explainComfyError(raw));
   }
   const id = created.prompt_id;
   if (!id) throw new Error("ComfyUI 没有返回任务 id");
@@ -433,7 +497,7 @@ export const comfyui: ModelAdapter = {
       defaultValue: "http://127.0.0.1:8188",
     },
     { key: "apiKey", label: "密钥（没有就空着）", type: "password", placeholder: "多数本机安装不需要" },
-    { key: "model", label: "Checkpoint / 模型文件", type: "text", placeholder: "点探测从本机列表选" },
+    { key: "model", label: "本机模型", type: "text", placeholder: "点探测从列表选" },
     {
       key: "workflow",
       label: "工作流 JSON（API Format）",

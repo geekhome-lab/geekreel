@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   applyPlaceholders,
   collectComfyOutputs,
+  explainComfyError,
   injectComfyPrompt,
   parseComfyWorkflow,
   parseSize,
@@ -46,6 +47,29 @@ test("从 object_info 抽出 checkpoint 文件名", () => {
     },
   });
   expect(names).toEqual(["a.safetensors", "b.ckpt"]);
+});
+
+test("探测别把 yaml 配置当成 checkpoint", () => {
+  const names = pickCheckpoints({
+    CheckpointLoader: {
+      input: {
+        required: {
+          config_name: [["v1-inference.yaml", "v2-inpainting-inference.yaml", "anything_v3.yaml"], {}],
+          ckpt_name: [["real.safetensors", "legacy.ckpt"], {}],
+        },
+      },
+    },
+  });
+  expect(names).toEqual(["legacy.ckpt", "real.safetensors"]);
+  expect(names.some((n) => n.endsWith(".yaml"))).toBe(false);
+});
+
+test("ComfyUI 校验失败翻成中文", () => {
+  expect(explainComfyError("Prompt outputs failed validation")).toContain("对不上");
+  expect(explainComfyError("Prompt outputs failed validation", ["ckpt_name: 'v1-inference.yaml' not in list"])).toContain(
+    "探测本机模型",
+  );
+  expect(explainComfyError("Prompt outputs failed validation")).not.toMatch(/不要选|yaml/i);
 });
 
 test("收集出图和出视频文件", () => {

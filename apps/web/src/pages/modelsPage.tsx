@@ -497,6 +497,8 @@ function ProbeModels(props: {
 }) {
   const [models, setModels] = useState<string[]>([]);
   const [error, setError] = useState("");
+  const current = props.config.model?.trim() ?? "";
+  const comfy = props.adapterType === "comfyui";
   const probe = useMutation({
     mutationFn: () =>
       apiJson<{ models: string[] }>("/api/models/probe", "post", {
@@ -506,39 +508,52 @@ function ProbeModels(props: {
     onSuccess: (r) => {
       setModels(r.models);
       setError("");
+      // 旧配置若已不在列表里，清掉，避免保存后继续跑挂
+      if (current && !r.models.includes(current)) props.onPick("");
+      else if (!current && r.models.length === 1) props.onPick(r.models[0]!);
     },
     onError: (e) => {
       setModels([]);
       setError(e instanceof Error ? e.message : String(e));
     },
   });
+  const options = models.length
+    ? models
+    : current
+      ? [current]
+      : [];
   return (
     <div className="space-y-2">
-      <button
-        type="button"
-        className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent disabled:opacity-40"
-        disabled={probe.isPending || !props.config.baseUrl?.trim()}
-        onClick={() => probe.mutate()}
-      >
-        {probe.isPending ? "探测中…" : "探测本机模型"}
-      </button>
+      <div className="flex items-center justify-between gap-2">
+        <label className="text-xs text-fg-dim">{comfy ? "本机模型" : "探测本机模型"}</label>
+        <button
+          type="button"
+          className="rounded-md border border-line px-2 py-1 text-[11px] text-fg-dim hover:text-accent disabled:opacity-40"
+          disabled={probe.isPending || !props.config.baseUrl?.trim()}
+          onClick={() => probe.mutate()}
+        >
+          {probe.isPending ? "探测中…" : models.length || current ? "重新探测" : "探测本机模型"}
+        </button>
+      </div>
       {error ? <p className="text-[11px] text-red-400">{error}</p> : null}
-      {models.length > 0 ? (
+      {options.length > 0 ? (
         <select
           className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 font-mono text-xs outline-none"
-          value=""
-          onChange={(e) => {
-            if (e.target.value) props.onPick(e.target.value);
-          }}
+          value={current}
+          onChange={(e) => props.onPick(e.target.value)}
         >
-          <option value="">从 {models.length} 个里选一个</option>
-          {models.map((id) => (
+          <option value="">{comfy ? "请选择一个模型" : `从 ${options.length} 个里选一个`}</option>
+          {options.map((id) => (
             <option key={id} value={id}>
               {id}
             </option>
           ))}
         </select>
-      ) : null}
+      ) : (
+        <p className="text-[11px] text-fg-faint">
+          {comfy ? "点「探测本机模型」，从本机可用列表里选一个。" : "点探测后可从列表里选。"}
+        </p>
+      )}
     </div>
   );
 }
@@ -607,6 +622,7 @@ function PresetKeyModal(props: { preset: ModelPreset; onClose: () => void; onSav
           <p className="text-[11px] text-fg-faint">加上后会向渠道要报价。拉不到会让你手填，不然近 30 天花费是 0。</p>
         )}
         {(p.editKeys ?? []).map((key) => {
+          if (p.adapterType === "comfyui" && key === "model") return null;
           const meta = EDIT_FIELDS[key] ?? { label: key };
           return (
             <div key={key}>
@@ -690,7 +706,8 @@ function EndpointModal(props: {
   const [adapterType, setAdapterType] = useState(ep?.adapterType ?? props.adapters[0]?.type ?? "");
   const [config, setConfig] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    for (const f of props.adapters.find((a) => a.type === (ep?.adapterType ?? props.adapters[0]?.type))?.configFields ?? []) {
+    const initialAdapter = ep?.adapterType ?? props.adapters[0]?.type;
+    for (const f of props.adapters.find((a) => a.type === initialAdapter)?.configFields ?? []) {
       if (ep && (f.type === "password" || f.key === "apiKey" || f.key === "secretKey")) {
         init[f.key] = "";
       } else {
@@ -699,6 +716,10 @@ function EndpointModal(props: {
     }
     for (const k of ["priceInput", "priceOutput", "priceImage", "priceTts", "priceVideo", "voice"] as const) {
       if (ep?.config[k]) init[k] = ep.config[k]!;
+    }
+    // 历史误存的非权重文件不展示，逼用户重新从探测列表选
+    if (initialAdapter === "comfyui" && init.model && !/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(init.model)) {
+      init.model = "";
     }
     return init;
   });
@@ -761,13 +782,16 @@ function EndpointModal(props: {
         if (!sent.apiKey?.trim() || sent.apiKey.includes("…") || sent.apiKey.includes("...")) delete sent.apiKey;
         if (!sent.secretKey?.trim() || sent.secretKey.includes("…") || sent.secretKey.includes("...")) delete sent.secretKey;
       }
-      if (!ep && adapterType === "comfyui") {
-        if (!sent.baseUrl?.trim()) throw new Error("请填写 ComfyUI 地址");
-        if (capability === "video" && !sent.workflow?.trim()) {
+      if (adapterType === "comfyui") {
+        if (!ep && !sent.baseUrl?.trim()) throw new Error("请填写 ComfyUI 地址");
+        if (!ep && capability === "video" && !sent.workflow?.trim()) {
           throw new Error("出视频请贴 ComfyUI 的 API Format 工作流");
         }
-        if (capability === "image" && !sent.model?.trim() && !sent.workflow?.trim()) {
-          throw new Error("出图请填 checkpoint 或贴工作流");
+        if (!ep && capability === "image" && !sent.model?.trim() && !sent.workflow?.trim()) {
+          throw new Error("出图请先点「探测本机模型」，从列表里选一个，或贴工作流");
+        }
+        if (sent.model?.trim() && !sent.workflow?.trim() && !/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i.test(sent.model)) {
+          throw new Error("当前模型不可用。请点「探测本机模型」，从列表里重新选一个。");
         }
       }
       const payload: Record<string, unknown> = { name: name.trim(), config: sent, webSearch, vision };
@@ -793,14 +817,19 @@ function EndpointModal(props: {
     <Modal title={ep ? `编辑端点 · ${ep.name}` : "自定义模型"} onClose={props.onClose}>
       <div className="space-y-4">
         <div>
-          <label className="mb-1.5 block text-xs text-fg-dim">名称</label>
+          <label className="mb-1.5 block text-xs text-fg-dim">
+            名称<span className="text-red-400"> *</span>
+          </label>
           <input
             autoFocus
             className="w-full rounded-lg border border-line bg-panel-2 px-3 py-2 text-sm outline-none focus:border-accent-dim"
-            placeholder="例如：我的 DeepSeek"
+            placeholder="例如：本机 ComfyUI"
             value={name}
             onChange={(e) => setName(e.target.value)}
           />
+          {!name.trim() && (
+            <p className="mt-1 text-[11px] text-amber-500">先填名称，保存按钮才会亮起来。</p>
+          )}
         </div>
 
         {!ep && (
@@ -848,24 +877,34 @@ function EndpointModal(props: {
           </div>
         )}
 
-        {adapter?.configFields.map((f) => (
-          <div key={f.key}>
-            <label className="mb-1.5 block text-xs text-fg-dim">
-              {f.label}
-              {f.required && <span className="text-red-400"> *</span>}
-            </label>
-            {fieldControl(f, config[f.key] ?? "", (v) => setConfig((m) => ({ ...m, [f.key]: v })))}
-            {ep && (f.key === "apiKey" || f.key === "secretKey" || f.type === "password") && (
-              <p className="mt-1 text-[10px] text-fg-faint">已保存过。留空继续用原来的，不要把打码贴回去。</p>
-            )}
-          </div>
-        ))}
+        {adapter?.configFields.map((f) => {
+          // ComfyUI 模型只从探测列表选，不提供手填，避免出现列表外无效项
+          if (adapterType === "comfyui" && f.key === "model") return null;
+          return (
+            <div key={f.key}>
+              <label className="mb-1.5 block text-xs text-fg-dim">
+                {f.label}
+                {f.required && <span className="text-red-400"> *</span>}
+              </label>
+              {fieldControl(f, config[f.key] ?? "", (v) => setConfig((m) => ({ ...m, [f.key]: v })))}
+              {ep && (f.key === "apiKey" || f.key === "secretKey" || f.type === "password") && (
+                <p className="mt-1 text-[10px] text-fg-faint">已保存过。留空继续用原来的，不要把打码贴回去。</p>
+              )}
+            </div>
+          );
+        })}
 
         {(adapterType === "openai-compatible" || adapterType === "comfyui") && (
           <ProbeModels
             adapterType={adapterType}
             config={config}
-            onPick={(id) => setConfig((m) => ({ ...m, model: id }))}
+            onPick={(id) => {
+              setConfig((m) => ({ ...m, model: id }));
+              if (id && !name.trim()) {
+                const short = id.split(/[/\\]/).pop() ?? id;
+                setName(short.replace(/\.(safetensors|ckpt|pt|pth|bin|gguf)$/i, "") || short);
+              }
+            }}
           />
         )}
 
@@ -942,7 +981,14 @@ function EndpointModal(props: {
           <button
             className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-black hover:brightness-110 disabled:opacity-40"
             disabled={!name.trim() || saveMutation.isPending}
-            onClick={() => saveMutation.mutate()}
+            title={!name.trim() ? "先填名称" : undefined}
+            onClick={() => {
+              if (!name.trim()) {
+                setError("先填名称再保存");
+                return;
+              }
+              saveMutation.mutate();
+            }}
           >
             {saveMutation.isPending ? "保存中…" : "保存"}
           </button>

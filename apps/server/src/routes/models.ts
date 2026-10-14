@@ -59,7 +59,12 @@ modelsRoutes.post("/probe", async (c) => {
   if (!adapter.listModels) return err(c, `「${adapter.label}」不会列模型，模型名请手填`);
   try {
     const models = await adapter.listModels(body.config ?? {});
-    if (!models.length) return err(c, "这个地址上还没有模型。Ollama 先 pull，LM Studio 先加载，ComfyUI 看 models 文件夹。");
+    if (!models.length) {
+      if (body.adapterType === "comfyui") {
+        return err(c, "本机 ComfyUI 还没有可用模型。把模型文件放进 ComfyUI 的 models/checkpoints 文件夹后再探测。");
+      }
+      return err(c, "这个地址上还没有模型。Ollama 先 pull，LM Studio 先加载。");
+    }
     return ok(c, { models });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
